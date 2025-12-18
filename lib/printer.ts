@@ -1,4 +1,3 @@
-import { SerialPort } from "serialport"
 import * as net from "net"
 
 // Communication logs storage (in production, use a database)
@@ -14,30 +13,19 @@ const printerState = {
 
 // Connection configuration
 interface ConnectionConfig {
-  type: "serial" | "tcp"
-  serial?: {
-    path: string
-    baudRate: number
-  }
-  tcp?: {
+  tcp: {
     host: string
     port: number
   }
 }
 
 let connectionConfig: ConnectionConfig = {
-  type: "serial",
-  serial: {
-    path: "/dev/ttyUSB0",
-    baudRate: 115200,
-  },
   tcp: {
     host: "192.168.1.100",
     port: 9100,
   },
 }
 
-let serialPort: SerialPort | null = null
 let tcpClient: net.Socket | null = null
 
 /**
@@ -46,9 +34,6 @@ let tcpClient: net.Socket | null = null
 export function updateConnectionConfig(config: ConnectionConfig) {
   connectionConfig = config
   // Close existing connections
-  if (serialPort?.isOpen) {
-    serialPort.close()
-  }
   if (tcpClient) {
     tcpClient.destroy()
     tcpClient = null
@@ -71,74 +56,27 @@ function initTCPConnection(): net.Socket | null {
     return tcpClient
   }
 
-  if (!connectionConfig.tcp) {
-    return null
-  }
-
   try {
     tcpClient = new net.Socket()
 
     tcpClient.connect(connectionConfig.tcp.port, connectionConfig.tcp.host, () => {
-      console.log("[v0] TCP connection established")
+      console.log("TCP connection established")
       printerState.connected = true
     })
 
     tcpClient.on("error", (err) => {
-      console.error("[v0] TCP error:", err)
+      console.error("TCP error:", err)
       printerState.connected = false
     })
 
     tcpClient.on("close", () => {
-      console.log("[v0] TCP connection closed")
+      console.log("TCP connection closed")
       printerState.connected = false
     })
 
     return tcpClient
   } catch (error) {
-    console.error("[v0] Failed to initialize TCP connection:", error)
-    return null
-  }
-}
-
-/**
- * Initialize serial port connection
- */
-async function initSerialPort() {
-  if (serialPort && serialPort.isOpen) {
-    return serialPort
-  }
-
-  if (!connectionConfig.serial) {
-    return null
-  }
-
-  try {
-    serialPort = new SerialPort({
-      path: connectionConfig.serial.path,
-      baudRate: connectionConfig.serial.baudRate,
-      dataBits: 8,
-      stopBits: 1,
-      parity: "none",
-    })
-
-    serialPort.on("open", () => {
-      console.log("[v0] Serial port opened")
-      printerState.connected = true
-    })
-
-    serialPort.on("error", (err) => {
-      console.error("[v0] Serial port error:", err)
-      printerState.connected = false
-    })
-
-    serialPort.on("close", () => {
-      console.log("[v0] Serial port closed")
-      printerState.connected = false
-    })
-
-    return serialPort
-  } catch (error) {
-    console.error("[v0] Failed to initialize serial port:", error)
+    console.error("Failed to initialize TCP connection:", error)
     return null
   }
 }
@@ -198,16 +136,10 @@ async function sendCommand(
   data: Buffer = Buffer.alloc(0),
 ): Promise<{ success: boolean; statusCode: number; data: Buffer }> {
   return new Promise(async (resolve, reject) => {
-    let connection: any = null
-
-    if (connectionConfig.type === "serial") {
-      connection = await initSerialPort()
-    } else {
-      connection = initTCPConnection()
-    }
+    const connection = initTCPConnection()
 
     if (!connection) {
-      reject(new Error("Connection not available"))
+      reject(new Error("TCP connection not available"))
       return
     }
 
@@ -222,14 +154,7 @@ async function sendCommand(
       rawHex: command.toString("hex").toUpperCase(),
     })
 
-    // Write command
-    if (connectionConfig.type === "serial" && connection instanceof SerialPort) {
-      connection.write(command, (err: any) => {
-        if (err) reject(err)
-      })
-    } else {
-      connection.write(command)
-    }
+    connection.write(command)
 
     // Wait for response
     const timeout = setTimeout(() => {
@@ -260,11 +185,8 @@ async function sendCommand(
       }
     }
 
-    if (connection instanceof SerialPort) {
-      connection.once("data", handleData)
-    } else {
-      connection.once("data", handleData)
-    }
+    // TCP data handling
+    connection.once("data", handleData)
   })
 }
 
@@ -329,18 +251,34 @@ export async function getPrinterStatus() {
 async function getCPUTemperature(): Promise<number> {
   try {
     const { exec } = require("child_process")
+    console.log("[v0] Attempting to read CPU temperature...")
+
     return new Promise((resolve) => {
-      exec("cat /sys/class/thermal/thermal_zone0/temp", (error: any, stdout: string) => {
+      exec("cat /sys/class/thermal/thermal_zone0/temp", (error: any, stdout: string, stderr: string) => {
         if (error) {
+          console.error("[v0] CPU temp read error:", error)
+          console.error("[v0] stderr:", stderr)
           resolve(0)
           return
         }
-        const tempMillidegrees = Number.parseInt(stdout.trim())
+
+        const rawOutput = stdout.trim()
+        console.log("[v0] Raw CPU temp output:", rawOutput)
+
+        const tempMillidegrees = Number.parseInt(rawOutput)
+        if (isNaN(tempMillidegrees)) {
+          console.error("[v0] Failed to parse temperature:", rawOutput)
+          resolve(0)
+          return
+        }
+
         const tempCelsius = tempMillidegrees / 1000
+        console.log("[v0] CPU Temperature:", tempCelsius, "°C")
         resolve(Math.round(tempCelsius * 10) / 10)
       })
     })
   } catch (error) {
+    console.error("[v0] CPU temperature exception:", error)
     return 0
   }
 }

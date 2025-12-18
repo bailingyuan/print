@@ -8,7 +8,6 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { Settings } from "lucide-react"
-import { Switch } from "@/components/ui/switch"
 import {
   Dialog,
   DialogContent,
@@ -51,9 +50,6 @@ interface CommunicationLog {
 }
 
 interface PrinterConfig {
-  connectionType: "serial" | "tcp"
-  serialPort: string
-  serialBaudRate: number
   tcpHost: string
   tcpPort: number
   stepperDirPin: number
@@ -69,9 +65,6 @@ export default function PrinterControlPage() {
 
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [config, setConfig] = useState<PrinterConfig>({
-    connectionType: "serial",
-    serialPort: "/dev/ttyUSB0",
-    serialBaudRate: 115200,
     tcpHost: "192.168.1.100",
     tcpPort: 9100,
     stepperDirPin: 20,
@@ -189,72 +182,27 @@ export default function PrinterControlPage() {
               <div className="space-y-6 py-4">
                 {/* Connection Settings */}
                 <div className="space-y-4">
-                  <h3 className="text-lg font-semibold">喷码机连接设置</h3>
+                  <h3 className="text-lg font-semibold">喷码机TCP连接设置</h3>
 
-                  <div className="flex items-center justify-between">
-                    <Label htmlFor="connection-type">连接方式</Label>
-                    <div className="flex items-center gap-2">
-                      <span className={config.connectionType === "serial" ? "font-semibold" : "text-muted-foreground"}>
-                        串口
-                      </span>
-                      <Switch
-                        id="connection-type"
-                        checked={config.connectionType === "tcp"}
-                        onCheckedChange={(checked) =>
-                          setConfig({ ...config, connectionType: checked ? "tcp" : "serial" })
-                        }
-                      />
-                      <span className={config.connectionType === "tcp" ? "font-semibold" : "text-muted-foreground"}>
-                        TCP
-                      </span>
-                    </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="tcp-host">IP地址</Label>
+                    <Input
+                      id="tcp-host"
+                      placeholder="192.168.1.100"
+                      value={config.tcpHost}
+                      onChange={(e) => setConfig({ ...config, tcpHost: e.target.value })}
+                    />
                   </div>
 
-                  {config.connectionType === "serial" ? (
-                    <>
-                      <div className="space-y-2">
-                        <Label htmlFor="serial-port">串口路径</Label>
-                        <Input
-                          id="serial-port"
-                          placeholder="/dev/ttyUSB0"
-                          value={config.serialPort}
-                          onChange={(e) => setConfig({ ...config, serialPort: e.target.value })}
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="baud-rate">波特率</Label>
-                        <Input
-                          id="baud-rate"
-                          type="number"
-                          value={config.serialBaudRate}
-                          onChange={(e) => setConfig({ ...config, serialBaudRate: Number.parseInt(e.target.value) })}
-                        />
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="space-y-2">
-                        <Label htmlFor="tcp-host">IP地址</Label>
-                        <Input
-                          id="tcp-host"
-                          placeholder="192.168.1.100"
-                          value={config.tcpHost}
-                          onChange={(e) => setConfig({ ...config, tcpHost: e.target.value })}
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="tcp-port">端口</Label>
-                        <Input
-                          id="tcp-port"
-                          type="number"
-                          value={config.tcpPort}
-                          onChange={(e) => setConfig({ ...config, tcpPort: Number.parseInt(e.target.value) })}
-                        />
-                      </div>
-                    </>
-                  )}
+                  <div className="space-y-2">
+                    <Label htmlFor="tcp-port">端口</Label>
+                    <Input
+                      id="tcp-port"
+                      type="number"
+                      value={config.tcpPort}
+                      onChange={(e) => setConfig({ ...config, tcpPort: Number.parseInt(e.target.value) })}
+                    />
+                  </div>
                 </div>
 
                 <Separator />

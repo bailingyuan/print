@@ -4,10 +4,10 @@
 
 ### 硬件要求
 - 树莓派 3/4/5 (推荐树莓派4以上)
-- TIJ喷码机 (带RS232接口)
-- USB转RS232转换器
+- TIJ喷码机 (支持TCP/IP网络接口)
 - 42步进电机 + 驱动器 (A4988/DRV8825)
 - 5V电源适配器
+- 网线或Wi-Fi连接
 
 ### 软件要求
 - Raspberry Pi OS (Debian 11+)
@@ -36,7 +36,7 @@ npm -v
 
 ### 3. 安装系统依赖
 ```bash
-# 安装编译工具链 (serialport需要)
+# 安装编译工具链
 sudo apt-get install -y build-essential python3
 
 # 安装 pigpio 库 (GPIO控制)
@@ -63,33 +63,28 @@ cd printer-control
 
 ### 2. 安装项目依赖
 ```bash
-# 安装依赖 (会自动重新编译 serialport)
+# 安装依赖
 npm install
-
-# 如果遇到 serialport 编译错误，手动重新编译
-npm rebuild serialport --build-from-source
-```
-
-### 3. 配置串口权限
-```bash
-# 将当前用户添加到 dialout 组
-sudo usermod -a -G dialout $USER
-
-# 为串口设备添加权限
-sudo chmod 666 /dev/ttyUSB0
-
-# 重新登录使权限生效 (或重启)
-sudo reboot
 ```
 
 ---
 
 ## 四、硬件连接
 
-### 1. 喷码机连接
-- 使用 USB转RS232 转换器连接喷码机
-- 插入树莓派USB口后，设备通常为 `/dev/ttyUSB0`
-- 确认设备存在: `ls -l /dev/ttyUSB*`
+### 1. 喷码机网络连接
+- 使用网线连接喷码机到路由器/交换机
+- 确保喷码机和树莓派在同一网络
+- 记录喷码机的IP地址 (例如: 192.168.1.100)
+- 默认端口通常为 9100
+
+**测试连接:**
+```bash
+# 使用 ping 测试网络连通性
+ping 192.168.1.100
+
+# 使用 telnet 测试端口
+telnet 192.168.1.100 9100
+```
 
 ### 2. 步进电机连接
 
@@ -172,14 +167,16 @@ pm2 stop printer-control
 
 ## 六、验证安装
 
-### 1. 检查串口
+### 1. 检查网络
 ```bash
-# 列出串口设备
-ls -l /dev/ttyUSB*
+# 测试喷码机连通性
+ping 192.168.1.100
 
-# 测试串口通信
-sudo apt-get install minicom
-minicom -D /dev/ttyUSB0 -b 115200
+# 测试端口
+telnet 192.168.1.100 9100
+
+# 查看树莓派IP
+hostname -I
 ```
 
 ### 2. 检查GPIO
@@ -203,55 +200,57 @@ hostname -I
 
 ---
 
-## 七、故障排除
+## 七、配置喷码机连接
 
-### 问题1: serialport 编译失败
+### 1. 打开设置面板
+1. 在浏览器访问控制面板
+2. 点击右上角设置图标 ⚙️
+3. 进入系统设置
+
+### 2. 配置TCP连接
+- **IP地址**: 输入喷码机的IP地址 (例如: 192.168.1.100)
+- **端口**: 输入喷码机的端口 (通常为 9100)
+- 点击"保存设置"
+
+### 3. 配置GPIO引脚
+- **方向引脚(DIR)**: GPIO 20
+- **步进引脚(STEP)**: GPIO 21
+- **使能引脚(ENABLE)**: GPIO 16
+- 点击"保存设置"
+
+---
+
+## 八、故障排除
+
+### 问题1: 无法连接喷码机
 
 **错误信息:**
 ```
-No native build was found for platform=linux arch=arm64
+TCP connection not available
 ```
 
 **解决方案:**
 ```bash
-# 安装编译依赖
-sudo apt-get install -y build-essential python3
+# 1. 检查网络连通性
+ping 192.168.1.100
 
-# 手动重新编译
-cd ~/printer-control
-npm rebuild serialport --build-from-source
+# 2. 检查端口是否开放
+telnet 192.168.1.100 9100
 
-# 或者删除 node_modules 重新安装
-rm -rf node_modules package-lock.json
-npm install
+# 3. 检查防火墙设置
+sudo ufw status
+
+# 4. 确认喷码机IP地址
+# 查看喷码机屏幕或配置界面
+
+# 5. 尝试使用网络扫描工具
+sudo apt-get install nmap
+nmap -p 9100 192.168.1.0/24
 ```
 
 ---
 
-### 问题2: 串口权限拒绝
-
-**错误信息:**
-```
-Error: Opening /dev/ttyUSB0: Permission denied
-```
-
-**解决方案:**
-```bash
-# 方法1: 添加用户到 dialout 组
-sudo usermod -a -G dialout $USER
-# 重新登录或重启
-
-# 方法2: 直接修改串口权限
-sudo chmod 666 /dev/ttyUSB0
-
-# 方法3: 创建 udev 规则 (永久生效)
-echo 'KERNEL=="ttyUSB[0-9]*", MODE="0666"' | sudo tee /etc/udev/rules.d/50-usb-serial.rules
-sudo udevadm control --reload-rules
-```
-
----
-
-### 问题3: GPIO 初始化失败
+### 问题2: GPIO 初始化失败
 
 **错误信息:**
 ```
@@ -275,34 +274,32 @@ sudo ufw status
 
 ---
 
-### 问题4: 喷码机无响应
+### 问题3: 喷码机无响应
 
 **可能原因:**
-1. 串口路径错误
-2. 波特率不匹配
-3. 喷码机未开机
-4. 线缆连接问题
+1. IP地址错误
+2. 端口号不正确
+3. 网络连接问题
+4. 喷码机未开机
 
 **排查步骤:**
 ```bash
-# 1. 确认串口设备
-ls -l /dev/ttyUSB*
+# 1. 确认网络连通
+ping 192.168.1.100
 
-# 2. 使用 minicom 测试
-sudo minicom -D /dev/ttyUSB0 -b 115200
+# 2. 测试端口连接
+telnet 192.168.1.100 9100
 
-# 3. 检查线缆针脚
-# TX → RX
-# RX → TX
-# GND → GND
+# 3. 检查路由
+traceroute 192.168.1.100
 
-# 4. 在Web界面尝试不同波特率
-# 常见: 9600, 19200, 38400, 57600, 115200
+# 4. 在Web界面检查通信日志
+# 查看发送和接收的命令
 ```
 
 ---
 
-### 问题5: 步进电机不转
+### 问题4: 步进电机不转
 
 **可能原因:**
 1. GPIO引脚连接错误
@@ -328,7 +325,7 @@ pigs hp 21 500 1  # GPIO21输出500us高脉冲
 
 ---
 
-### 问题6: CPU温度显示为0
+### 问题5: CPU温度显示为0
 
 **解决方案:**
 ```bash
@@ -344,7 +341,29 @@ cat /sys/class/hwmon/hwmon0/temp1_input
 
 ---
 
-## 八、性能优化
+### 问题6: 网页无法访问
+
+**解决方案:**
+```bash
+# 1. 检查Node进程是否运行
+ps aux | grep node
+
+# 2. 检查端口占用
+sudo netstat -tlnp | grep 3000
+
+# 3. 检查防火墙
+sudo ufw allow 3000
+
+# 4. 查看应用日志
+pm2 logs printer-control
+
+# 5. 重启应用
+pm2 restart printer-control
+```
+
+---
+
+## 九、性能优化
 
 ### 1. 禁用不必要的服务
 ```bash
@@ -374,7 +393,7 @@ sudo nano /etc/dhcpcd.conf
 
 # 添加以下内容
 interface eth0
-static ip_address=192.168.1.100/24
+static ip_address=192.168.1.99/24
 static routers=192.168.1.1
 static domain_name_servers=8.8.8.8
 
@@ -384,7 +403,7 @@ sudo systemctl restart dhcpcd
 
 ---
 
-## 九、安全建议
+## 十、安全建议
 
 ### 1. 修改默认密码
 ```bash
@@ -425,7 +444,7 @@ chmod +x ~/update.sh
 
 ---
 
-## 十、备份与恢复
+## 十一、备份与恢复
 
 ### 1. 备份配置
 ```bash
@@ -447,13 +466,13 @@ gzip ~/raspberry-backup.img
 
 ---
 
-## 十一、技术支持
+## 十二、技术支持
 
 ### 文档资源
 - TIJ通讯协议: `TIJ_通讯协议6.6无屏机.pdf`
 - 树莓派GPIO: https://pinout.xyz/
 - pigpio文档: http://abyz.me.uk/rpi/pigpio/
-- serialport文档: https://serialport.io/
+- Node.js net模块: https://nodejs.org/api/net.html
 
 ### 常用命令速查
 ```bash
@@ -472,10 +491,42 @@ journalctl -u pigpiod
 pm2 logs
 
 # 测试网络
-ping 192.168.1.1
+ping 192.168.1.100
 ifconfig
+netstat -tlnp
+
+# 测试TCP连接
+telnet 192.168.1.100 9100
+nc -zv 192.168.1.100 9100
 ```
 
 ---
 
+## 十三、网络配置指南
+
+### 1. 查找喷码机IP地址
+```bash
+# 扫描本地网络
+sudo apt-get install nmap
+nmap -sn 192.168.1.0/24
+
+# 查找开放9100端口的设备
+nmap -p 9100 192.168.1.0/24
+```
+
+### 2. 配置静态IP (喷码机)
+建议为喷码机配置静态IP地址，避免IP变化导致连接失败。
+请参考喷码机说明书进行配置。
+
+### 3. 路由器端口映射 (可选)
+如需远程访问，可在路由器配置端口映射:
+- 外部端口: 8080 → 内部端口: 3000 (树莓派)
+
+---
+
 安装完成后，访问 `http://<树莓派IP>:3000` 开始使用系统！
+
+**重要提示:** 
+- 确保喷码机和树莓派在同一网络
+- 首次使用前在设置面板配置正确的TCP连接参数
+- 查看通信日志确认命令发送和接收情况

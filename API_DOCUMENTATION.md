@@ -2,13 +2,13 @@
 
 ## 概述
 
-本系统提供完整的喷码机控制接口，支持串口和TCP两种连接方式，可控制42步进电机导轨，并实时监控设备状态。
+本系统提供完整的喷码机控制接口，使用TCP连接喷码机，可控制42步进电机导轨，并实时监控设备状态。
 
 ## 基础信息
 
 - **基础URL**: `http://localhost:3000/api`
 - **通信协议**: TIJ 6.6
-- **支持连接**: 串口(Serial)、TCP/IP
+- **连接方式**: TCP/IP
 
 ---
 
@@ -160,14 +160,11 @@
 
 **端点**: `POST /api/settings`
 
-**描述**: 更新喷码机连接和步进电机配置
+**描述**: 更新喷码机TCP连接和步进电机配置
 
 **请求体**:
 ```json
 {
-  "connectionType": "serial",
-  "serialPort": "/dev/ttyUSB0",
-  "serialBaudRate": 115200,
   "tcpHost": "192.168.1.100",
   "tcpPort": 9100,
   "stepperDirPin": 20,
@@ -195,9 +192,6 @@
 **响应**:
 ```json
 {
-  "connectionType": "serial",
-  "serialPort": "/dev/ttyUSB0",
-  "serialBaudRate": 115200,
   "tcpHost": "192.168.1.100",
   "tcpPort": 9100,
   "stepperDirPin": 20,
@@ -221,16 +215,10 @@
 
 ### 喷码机连接
 
-#### 串口连接
-- **设备**: `/dev/ttyUSB0` (可配置)
-- **波特率**: 115200 (可配置)
-- **数据位**: 8
-- **停止位**: 1
-- **校验位**: 无
-
 #### TCP连接
 - **IP地址**: 192.168.1.100 (可配置)
 - **端口**: 9100 (可配置)
+- **协议**: TIJ 6.6
 
 ---
 
@@ -240,10 +228,9 @@
 
 1. 打开网页控制面板
 2. 点击右上角设置图标
-3. 选择连接方式（串口/TCP）
-4. 配置相应参数
-5. 设置步进电机GPIO引脚
-6. 保存设置
+3. 配置TCP连接参数（IP地址和端口）
+4. 设置步进电机GPIO引脚
+5. 保存设置
 
 ### 2. 打印二维码
 
@@ -275,6 +262,39 @@
 
 ---
 
+## TIJ 协议命令参考
+
+### 常用命令列表
+
+| 命令ID | 名称 | 功能说明 |
+|--------|------|----------|
+| 0x01 | 发送打印 | 更新打印内容并准备打印 |
+| 0x11 | 启动喷印 | 启动喷码机开始工作 |
+| 0x12 | 停止喷印 | 停止喷码机工作 |
+| 0x13 | 触发喷印 | 触发一次打印动作 |
+| 0x14 | 获取报警 | 获取设备报警状态 |
+| 0x1C | 发送信息 | 发送二维码等信息文件 |
+| 0x26 | 获取墨盒 | 获取墨盒剩余量 |
+
+### 协议数据格式
+
+**命令格式**:
+```
+1B 02 [机器编号] [命令ID] [数据内容] 1B 03 [校验和]
+```
+
+**响应格式**:
+```
+1B 06 [机器编号] [状态码] [命令ID] [数据内容] 1B 03 [校验和]
+```
+
+**校验和计算**:
+```
+校验和 = (0x100 - (所有字节之和 & 0xFF)) & 0xFF
+```
+
+---
+
 ## 错误代码
 
 | 状态码 | 说明 |
@@ -290,10 +310,10 @@
 
 ## 注意事项
 
-1. **权限**: 树莓派GPIO和串口需要root权限，运行前执行：
+1. **权限**: 树莓派GPIO需要root权限，运行前执行：
    ```bash
    sudo pigpiod
-   sudo chmod 666 /dev/ttyUSB0
+   sudo systemctl enable pigpiod
    ```
 
 2. **依赖安装**:
@@ -302,11 +322,13 @@
    npm install
    ```
 
-3. **连接切换**: 切换连接方式时会自动关闭现有连接
+3. **网络配置**: 确保树莓派和喷码机在同一网络，且IP地址配置正确
 
 4. **步进电机**: 修改GPIO引脚后需要重新初始化，建议停止所有操作后再更改
 
 5. **通信日志**: 最多保留最近50条记录
+
+6. **CPU温度**: 温度数值从 `/sys/class/thermal/thermal_zone0/temp` 读取（毫摄氏度），自动转换为摄氏度
 
 ---
 
@@ -314,7 +336,56 @@
 
 如遇问题，请检查:
 1. 硬件连接是否正确
-2. 树莓派GPIO服务是否启动 (`sudo pigpiod`)
-3. 串口设备路径是否正确 (`ls /dev/tty*`)
-4. TCP连接的IP地址和端口是否正确
+2. 树莓派GPIO服务是否启动 (`sudo systemctl status pigpiod`)
+3. TCP连接的IP地址和端口是否正确
+4. 使用 `ping` 测试网络连通性
 5. 查看浏览器控制台和服务器日志获取详细错误信息
+
+---
+
+## 示例代码
+
+### 使用 curl 测试API
+
+```bash
+# 获取状态
+curl http://localhost:3000/api/printer/status
+
+# 发送打印任务
+curl -X POST http://localhost:3000/api/printer/print \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://example.com","quantity":5}'
+
+# 控制导轨
+curl -X POST http://localhost:3000/api/stepper/move \
+  -H "Content-Type: application/json" \
+  -d '{"direction":"right","steps":100}'
+
+# 更新设置
+curl -X POST http://localhost:3000/api/settings \
+  -H "Content-Type: application/json" \
+  -d '{"tcpHost":"192.168.1.100","tcpPort":9100,"stepperDirPin":20,"stepperStepPin":21,"stepperEnablePin":16}'
+```
+
+### JavaScript 示例
+
+```javascript
+// 发送打印任务
+async function printQRCode(url, quantity) {
+  const response = await fetch('/api/printer/print', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url, quantity })
+  });
+  const result = await response.json();
+  console.log(result);
+}
+
+// 获取状态
+async function getStatus() {
+  const response = await fetch('/api/printer/status');
+  const status = await response.json();
+  console.log('Connected:', status.connected);
+  console.log('Cartridge:', status.cartridgeLevel + '%');
+  console.log('Temperature:', status.cpuTemperature + '°C');
+}

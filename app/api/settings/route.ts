@@ -6,13 +6,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
 
-    // Update printer connection config
     updateConnectionConfig({
-      type: body.connectionType,
-      serial: {
-        path: body.serialPort,
-        baudRate: body.serialBaudRate,
-      },
       tcp: {
         host: body.tcpHost,
         port: body.tcpPort,
@@ -31,7 +25,7 @@ export async function POST(request: NextRequest) {
       message: "Settings updated successfully",
     })
   } catch (error) {
-    console.error("[v0] Settings update error:", error)
+    console.error("Settings update error:", error)
     return NextResponse.json({ success: false, error: "Failed to update settings" }, { status: 500 })
   }
 }
@@ -42,9 +36,6 @@ export async function GET() {
     const stepperConfig = getStepperConfig()
 
     return NextResponse.json({
-      connectionType: connectionConfig.type,
-      serialPort: connectionConfig.serial?.path,
-      serialBaudRate: connectionConfig.serial?.baudRate,
       tcpHost: connectionConfig.tcp?.host,
       tcpPort: connectionConfig.tcp?.port,
       stepperDirPin: stepperConfig.dirPin,
@@ -52,7 +43,7 @@ export async function GET() {
       stepperEnablePin: stepperConfig.enablePin,
     })
   } catch (error) {
-    console.error("[v0] Get settings error:", error)
+    console.error("Get settings error:", error)
     return NextResponse.json({ error: "Failed to get settings" }, { status: 500 })
   }
 }

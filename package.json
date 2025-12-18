@@ -5,7 +5,6 @@
   "scripts": {
     "build": "next build",
     "dev": "next dev",
-    "postinstall": "npm rebuild serialport --build-from-source || true",
     "lint": "eslint .",
     "start": "next start"
   },
@@ -56,7 +55,6 @@
     "react-hook-form": "^7.60.0",
     "react-resizable-panels": "^2.1.7",
     "recharts": "2.15.4",
-    "serialport": "13.0.0",
     "sonner": "^1.7.4",
     "swr": "2.3.8",
     "tailwind-merge": "^3.3.1",
@@ -69,7 +67,6 @@
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@types/serialport": "^8.0.5",
     "postcss": "^8.5",
     "tailwindcss": "^4.1.9",
     "tw-animate-css": "1.3.3",

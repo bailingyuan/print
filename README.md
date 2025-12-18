@@ -12,7 +12,7 @@
 2. **导轨控制** - 42步进电机精确控制喷码机移动
 3. **实时监控** - 显示连接状态、墨盒余量、CPU温度
 4. **通信日志** - 美观显示所有发送/接收的命令数据
-5. **可视化配置** - 网页界面配置串口/TCP、GPIO引脚
+5. **可视化配置** - 网页界面配置TCP连接、GPIO引脚
 
 ### 系统截图
 
@@ -23,8 +23,8 @@
 ## 硬件连接
 
 ### 喷码机
-- **串口**: USB转RS232 → `/dev/ttyUSB0`
-- **波特率**: 115200 (可在界面配置)
+- **连接方式**: TCP/IP
+- **默认地址**: 192.168.1.100:9100 (可在界面配置)
 
 ### 步进电机 (42步进电机)
 ```
@@ -60,10 +60,6 @@ cd printer-control
 
 # 安装依赖
 npm install
-
-# 配置串口权限
-sudo usermod -a -G dialout $USER
-sudo chmod 666 /dev/ttyUSB0
 ```
 
 ### 3. 启动应用
@@ -102,15 +98,14 @@ npm start
 
 ### 1. 配置连接
 点击右上角设置图标 ⚙️，配置:
-- 连接方式: 串口 / TCP
-- 串口路径: `/dev/ttyUSB0`
-- 波特率: `115200`
+- TCP IP地址: `192.168.1.100`
+- TCP端口: `9100`
 - GPIO引脚: EN(16), DIR(20), STEP(21)
 
 ### 2. 打印二维码
 1. 输入URL链接 (如: `https://example.com`)
 2. 设置打印数量
-3. 点击"开始打印"
+3. 点击"发送打印"
 4. 在通信日志中查看执行过程
 
 ### 3. 控制导轨
@@ -149,23 +144,17 @@ npm start
 
 ## 故障排除
 
-### serialport 编译错误
-```bash
-# 重新编译 serialport
-npm rebuild serialport --build-from-source
-```
-
-### 串口权限拒绝
-```bash
-sudo chmod 666 /dev/ttyUSB0
-sudo usermod -a -G dialout $USER
-```
-
 ### GPIO 初始化失败
 ```bash
 sudo pigpiod
 sudo systemctl status pigpiod
 ```
+
+### TCP连接失败
+- 检查喷码机IP地址是否正确
+- 确认网络连接正常
+- 使用 `ping` 命令测试连通性
+- 检查防火墙设置
 
 ### 更多问题
 请查看完整的 [INSTALL.md](./INSTALL.md) 文档
@@ -176,7 +165,7 @@ sudo systemctl status pigpiod
 
 - **前端**: Next.js 16 + React 19 + Tailwind CSS v4
 - **UI**: shadcn/ui + Lucide Icons
-- **通信**: serialport (串口) + net (TCP)
+- **通信**: Node.js net (TCP)
 - **GPIO**: pigpio
 - **状态**: SWR
 
@@ -194,7 +183,7 @@ printer-control/
 │   │   └── settings/         # 配置API
 │   └── globals.css           # 全局样式
 ├── lib/
-│   ├── printer.ts            # 喷码机控制
+│   ├── printer.ts            # 喷码机控制 (TCP)
 │   ├── stepper.ts            # 步进电机控制
 │   └── swr.ts                # SWR配置
 ├── components/ui/            # UI组件库
