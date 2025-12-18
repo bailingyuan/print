@@ -103,7 +103,7 @@ function initTCPConnection(): net.Socket | null {
 /**
  * Initialize serial port connection
  */
-function initSerialPort() {
+async function initSerialPort() {
   if (serialPort && serialPort.isOpen) {
     return serialPort
   }
@@ -197,11 +197,11 @@ async function sendCommand(
   commandName: string,
   data: Buffer = Buffer.alloc(0),
 ): Promise<{ success: boolean; statusCode: number; data: Buffer }> {
-  return new Promise((resolve, reject) => {
-    let connection: SerialPort | net.Socket | null = null
+  return new Promise(async (resolve, reject) => {
+    let connection: any = null
 
     if (connectionConfig.type === "serial") {
-      connection = initSerialPort()
+      connection = await initSerialPort()
     } else {
       connection = initTCPConnection()
     }
@@ -223,8 +223,8 @@ async function sendCommand(
     })
 
     // Write command
-    if (connection instanceof SerialPort) {
-      connection.write(command, (err) => {
+    if (connectionConfig.type === "serial" && connection instanceof SerialPort) {
+      connection.write(command, (err: any) => {
         if (err) reject(err)
       })
     } else {
@@ -335,8 +335,9 @@ async function getCPUTemperature(): Promise<number> {
           resolve(0)
           return
         }
-        const temp = Number.parseInt(stdout) / 1000
-        resolve(Math.round(temp * 10) / 10)
+        const tempMillidegrees = Number.parseInt(stdout.trim())
+        const tempCelsius = tempMillidegrees / 1000
+        resolve(Math.round(tempCelsius * 10) / 10)
       })
     })
   } catch (error) {
