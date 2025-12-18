@@ -7,6 +7,16 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
+import { Settings } from "lucide-react"
+import { Switch } from "@/components/ui/switch"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
 import {
   Activity,
   Thermometer,
@@ -40,18 +50,39 @@ interface CommunicationLog {
   rawHex: string
 }
 
+interface PrinterConfig {
+  connectionType: "serial" | "tcp"
+  serialPort: string
+  serialBaudRate: number
+  tcpHost: string
+  tcpPort: number
+  stepperDirPin: number
+  stepperStepPin: number
+  stepperEnablePin: number
+}
+
 export default function PrinterControlPage() {
   const [qrUrl, setQrUrl] = useState("")
   const [quantity, setQuantity] = useState("1")
   const [railPosition, setRailPosition] = useState(0)
   const [isLoading, setIsLoading] = useState(false)
 
-  // Fetch printer status
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [config, setConfig] = useState<PrinterConfig>({
+    connectionType: "serial",
+    serialPort: "/dev/ttyUSB0",
+    serialBaudRate: 115200,
+    tcpHost: "192.168.1.100",
+    tcpPort: 9100,
+    stepperDirPin: 20,
+    stepperStepPin: 21,
+    stepperEnablePin: 16,
+  })
+
   const { data: status } = useSWR<PrinterStatus>("/api/printer/status", {
     refreshInterval: 2000,
   })
 
-  // Fetch communication logs
   const { data: logs, mutate: mutateLogs } = useSWR<CommunicationLog[]>("/api/printer/logs", {
     refreshInterval: 1000,
   })
@@ -116,13 +147,173 @@ export default function PrinterControlPage() {
     }
   }
 
+  const handleSaveSettings = async () => {
+    try {
+      const response = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(config),
+      })
+
+      if (response.ok) {
+        setSettingsOpen(false)
+      }
+    } catch (error) {
+      console.error("[v0] Save settings error:", error)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-4 md:p-8">
       <div className="mx-auto max-w-7xl space-y-6">
         {/* Header */}
-        <div className="text-center space-y-2">
-          <h1 className="text-4xl font-bold tracking-tight">喷码机控制系统</h1>
-          <p className="text-muted-foreground">TIJ Printer Control System</p>
+        <div className="flex items-center justify-between">
+          <div className="text-center flex-1 space-y-2">
+            <h1 className="text-4xl font-bold tracking-tight">喷码机控制系统</h1>
+            <p className="text-muted-foreground">TIJ Printer Control System</p>
+          </div>
+
+          {/* Settings Button */}
+          <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline" size="icon">
+                <Settings className="h-5 w-5" />
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>系统设置</DialogTitle>
+                <DialogDescription>配置喷码机连接和步进电机参数</DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-6 py-4">
+                {/* Connection Settings */}
+                <div className="space-y-4">
+                  <h3 className="text-lg font-semibold">喷码机连接设置</h3>
+
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="connection-type">连接方式</Label>
+                    <div className="flex items-center gap-2">
+                      <span className={config.connectionType === "serial" ? "font-semibold" : "text-muted-foreground"}>
+                        串口
+                      </span>
+                      <Switch
+                        id="connection-type"
+                        checked={config.connectionType === "tcp"}
+                        onCheckedChange={(checked) =>
+                          setConfig({ ...config, connectionType: checked ? "tcp" : "serial" })
+                        }
+                      />
+                      <span className={config.connectionType === "tcp" ? "font-semibold" : "text-muted-foreground"}>
+                        TCP
+                      </span>
+                    </div>
+                  </div>
+
+                  {config.connectionType === "serial" ? (
+                    <>
+                      <div className="space-y-2">
+                        <Label htmlFor="serial-port">串口路径</Label>
+                        <Input
+                          id="serial-port"
+                          placeholder="/dev/ttyUSB0"
+                          value={config.serialPort}
+                          onChange={(e) => setConfig({ ...config, serialPort: e.target.value })}
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="baud-rate">波特率</Label>
+                        <Input
+                          id="baud-rate"
+                          type="number"
+                          value={config.serialBaudRate}
+                          onChange={(e) => setConfig({ ...config, serialBaudRate: Number.parseInt(e.target.value) })}
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="space-y-2">
+                        <Label htmlFor="tcp-host">IP地址</Label>
+                        <Input
+                          id="tcp-host"
+                          placeholder="192.168.1.100"
+                          value={config.tcpHost}
+                          onChange={(e) => setConfig({ ...config, tcpHost: e.target.value })}
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="tcp-port">端口</Label>
+                        <Input
+                          id="tcp-port"
+                          type="number"
+                          value={config.tcpPort}
+                          onChange={(e) => setConfig({ ...config, tcpPort: Number.parseInt(e.target.value) })}
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                <Separator />
+
+                {/* Stepper Motor Settings */}
+                <div className="space-y-4">
+                  <h3 className="text-lg font-semibold">步进电机GPIO设置</h3>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="dir-pin">方向控制引脚 (DIR)</Label>
+                    <Input
+                      id="dir-pin"
+                      type="number"
+                      value={config.stepperDirPin}
+                      onChange={(e) => setConfig({ ...config, stepperDirPin: Number.parseInt(e.target.value) })}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="step-pin">步进控制引脚 (STEP/PWM)</Label>
+                    <Input
+                      id="step-pin"
+                      type="number"
+                      value={config.stepperStepPin}
+                      onChange={(e) => setConfig({ ...config, stepperStepPin: Number.parseInt(e.target.value) })}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="enable-pin">使能引脚 (ENABLE)</Label>
+                    <Input
+                      id="enable-pin"
+                      type="number"
+                      value={config.stepperEnablePin}
+                      onChange={(e) => setConfig({ ...config, stepperEnablePin: Number.parseInt(e.target.value) })}
+                    />
+                  </div>
+
+                  <div className="rounded-lg bg-blue-50 border border-blue-200 p-4 text-sm">
+                    <p className="font-medium mb-2">引脚说明：</p>
+                    <ul className="list-disc list-inside space-y-1 text-muted-foreground">
+                      <li>GND: 接地线，连接到树莓派的GND引脚</li>
+                      <li>5V: 电源线，连接到树莓派的5V引脚</li>
+                      <li>DIR: 方向控制，使用GPIO引脚</li>
+                      <li>STEP: 步进信号，使用GPIO引脚（支持PWM）</li>
+                      <li>ENABLE: 使能控制，使用GPIO引脚</li>
+                    </ul>
+                  </div>
+                </div>
+
+                <div className="flex gap-2 justify-end">
+                  <Button variant="outline" onClick={() => setSettingsOpen(false)}>
+                    取消
+                  </Button>
+                  <Button onClick={handleSaveSettings}>保存设置</Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
         </div>
 
         {/* Status Cards */}

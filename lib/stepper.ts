@@ -3,11 +3,28 @@
 
 let currentPosition = 0
 
-const STEPPER_CONFIG = {
-  dirPin: 20, // GPIO pin for direction
-  stepPin: 21, // GPIO pin for PWM/step signal
-  enablePin: 16, // GPIO pin for enable (optional)
-  stepsPerRevolution: 200, // 42 stepper motor: 1.8° per step = 200 steps/rev
+let STEPPER_CONFIG = {
+  dirPin: 20,
+  stepPin: 21,
+  enablePin: 16,
+  stepsPerRevolution: 200,
+}
+
+/**
+ * Update stepper motor configuration
+ */
+export function updateStepperConfig(config: { dirPin: number; stepPin: number; enablePin: number }) {
+  STEPPER_CONFIG = {
+    ...STEPPER_CONFIG,
+    ...config,
+  }
+}
+
+/**
+ * Get current stepper configuration
+ */
+export function getStepperConfig() {
+  return STEPPER_CONFIG
 }
 
 let Gpio: any = null

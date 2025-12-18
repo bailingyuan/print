@@ -1,4 +1,5 @@
 import { SerialPort } from "serialport"
+import * as net from "net"
 
 // Communication logs storage (in production, use a database)
 let communicationLogs: any[] = []
@@ -11,18 +12,93 @@ const printerState = {
   position: 0,
 }
 
-// Serial port configuration
-const SERIAL_CONFIG = {
-  path: "/dev/ttyUSB0", // Adjust based on your setup
-  baudRate: 115200,
-  dataBits: 8,
-  stopBits: 1,
-  parity: "none" as const,
+// Connection configuration
+interface ConnectionConfig {
+  type: "serial" | "tcp"
+  serial?: {
+    path: string
+    baudRate: number
+  }
+  tcp?: {
+    host: string
+    port: number
+  }
 }
 
-const MACHINE_NUMBER = 0x00
+let connectionConfig: ConnectionConfig = {
+  type: "serial",
+  serial: {
+    path: "/dev/ttyUSB0",
+    baudRate: 115200,
+  },
+  tcp: {
+    host: "192.168.1.100",
+    port: 9100,
+  },
+}
 
 let serialPort: SerialPort | null = null
+let tcpClient: net.Socket | null = null
+
+/**
+ * Update connection configuration
+ */
+export function updateConnectionConfig(config: ConnectionConfig) {
+  connectionConfig = config
+  // Close existing connections
+  if (serialPort?.isOpen) {
+    serialPort.close()
+  }
+  if (tcpClient) {
+    tcpClient.destroy()
+    tcpClient = null
+  }
+  printerState.connected = false
+}
+
+/**
+ * Get current connection configuration
+ */
+export function getConnectionConfig(): ConnectionConfig {
+  return connectionConfig
+}
+
+/**
+ * Initialize TCP connection
+ */
+function initTCPConnection(): net.Socket | null {
+  if (tcpClient && !tcpClient.destroyed) {
+    return tcpClient
+  }
+
+  if (!connectionConfig.tcp) {
+    return null
+  }
+
+  try {
+    tcpClient = new net.Socket()
+
+    tcpClient.connect(connectionConfig.tcp.port, connectionConfig.tcp.host, () => {
+      console.log("[v0] TCP connection established")
+      printerState.connected = true
+    })
+
+    tcpClient.on("error", (err) => {
+      console.error("[v0] TCP error:", err)
+      printerState.connected = false
+    })
+
+    tcpClient.on("close", () => {
+      console.log("[v0] TCP connection closed")
+      printerState.connected = false
+    })
+
+    return tcpClient
+  } catch (error) {
+    console.error("[v0] Failed to initialize TCP connection:", error)
+    return null
+  }
+}
 
 /**
  * Initialize serial port connection
@@ -32,8 +108,18 @@ function initSerialPort() {
     return serialPort
   }
 
+  if (!connectionConfig.serial) {
+    return null
+  }
+
   try {
-    serialPort = new SerialPort(SERIAL_CONFIG)
+    serialPort = new SerialPort({
+      path: connectionConfig.serial.path,
+      baudRate: connectionConfig.serial.baudRate,
+      dataBits: 8,
+      stopBits: 1,
+      parity: "none",
+    })
 
     serialPort.on("open", () => {
       console.log("[v0] Serial port opened")
@@ -73,7 +159,7 @@ function calculateChecksum(data: Buffer): number {
  * Build command packet
  */
 function buildCommand(commandId: number, data: Buffer = Buffer.alloc(0)): Buffer {
-  const header = Buffer.from([0x1b, 0x02, MACHINE_NUMBER, commandId])
+  const header = Buffer.from([0x1b, 0x02, 0x00, commandId])
   const footer = Buffer.from([0x1b, 0x03])
 
   const packet = Buffer.concat([header, data, footer])
@@ -112,9 +198,16 @@ async function sendCommand(
   data: Buffer = Buffer.alloc(0),
 ): Promise<{ success: boolean; statusCode: number; data: Buffer }> {
   return new Promise((resolve, reject) => {
-    const port = initSerialPort()
-    if (!port) {
-      reject(new Error("Serial port not available"))
+    let connection: SerialPort | net.Socket | null = null
+
+    if (connectionConfig.type === "serial") {
+      connection = initSerialPort()
+    } else {
+      connection = initTCPConnection()
+    }
+
+    if (!connection) {
+      reject(new Error("Connection not available"))
       return
     }
 
@@ -129,19 +222,21 @@ async function sendCommand(
       rawHex: command.toString("hex").toUpperCase(),
     })
 
-    port.write(command, (err) => {
-      if (err) {
-        reject(err)
-        return
-      }
-    })
+    // Write command
+    if (connection instanceof SerialPort) {
+      connection.write(command, (err) => {
+        if (err) reject(err)
+      })
+    } else {
+      connection.write(command)
+    }
 
     // Wait for response
     const timeout = setTimeout(() => {
       reject(new Error("Response timeout"))
     }, 5000)
 
-    port.once("data", (response: Buffer) => {
+    const handleData = (response: Buffer) => {
       clearTimeout(timeout)
 
       // Log received response
@@ -163,7 +258,13 @@ async function sendCommand(
       } catch (error) {
         reject(error)
       }
-    })
+    }
+
+    if (connection instanceof SerialPort) {
+      connection.once("data", handleData)
+    } else {
+      connection.once("data", handleData)
+    }
   })
 }
 
