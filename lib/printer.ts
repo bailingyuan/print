@@ -1,4 +1,5 @@
-import * as net from "net"
+import type { Socket } from "net"
+import { exec } from "child_process"
 
 // Communication logs storage (in production, use a database)
 let communicationLogs: any[] = []
@@ -26,7 +27,7 @@ let connectionConfig: ConnectionConfig = {
   },
 }
 
-let tcpClient: net.Socket | null = null
+let tcpClient: Socket | null = null
 
 /**
  * Update connection configuration
@@ -51,32 +52,33 @@ export function getConnectionConfig(): ConnectionConfig {
 /**
  * Initialize TCP connection
  */
-function initTCPConnection(): net.Socket | null {
+function initTCPConnection(): Socket | null {
   if (tcpClient && !tcpClient.destroyed) {
     return tcpClient
   }
 
   try {
+    const net = require("net")
     tcpClient = new net.Socket()
 
     tcpClient.connect(connectionConfig.tcp.port, connectionConfig.tcp.host, () => {
-      console.log("TCP connection established")
+      console.log("[v0] TCP connection established")
       printerState.connected = true
     })
 
     tcpClient.on("error", (err) => {
-      console.error("TCP error:", err)
+      console.error("[v0] TCP error:", err)
       printerState.connected = false
     })
 
     tcpClient.on("close", () => {
-      console.log("TCP connection closed")
+      console.log("[v0] TCP connection closed")
       printerState.connected = false
     })
 
     return tcpClient
   } catch (error) {
-    console.error("Failed to initialize TCP connection:", error)
+    console.error("[v0] Failed to initialize TCP connection:", error)
     return null
   }
 }
@@ -106,14 +108,49 @@ function buildCommand(commandId: number, data: Buffer = Buffer.alloc(0)): Buffer
   return Buffer.concat([packet, Buffer.from([checksum])])
 }
 
+const STATUS_CODE_MAP: Record<number, string> = {
+  0: "成功 - 无错误",
+  1: "喷码机错误",
+  11: "二维码子模块数过多",
+  13: "序列号编号不存在",
+  14: "字段数过少",
+  15: "账号密码错误",
+  16: "信息名不存在",
+  17: "喷印已启动",
+  18: "喷印未启动",
+  19: "编组模式",
+  20: "打印间隔过小",
+  21: "信息保存失败",
+  22: "喷嘴选择-双列",
+  23: "固定速度",
+  24: "班次模块时间重叠",
+  66: "缓存刚满",
+  67: "缓存仍满",
+  253: "服务到期",
+  254: "喷码机解锁",
+  255: "喷码机锁定",
+}
+
+const COMMAND_NAME_MAP: Record<number, string> = {
+  0: "握手通信",
+  1: "发送打印",
+  17: "启动喷印",
+  18: "停止喷印",
+  19: "触发打印",
+  20: "获取报警状态",
+  28: "发送信息文件",
+  38: "获取墨盒余量",
+}
+
 /**
- * Parse response packet
+ * Parse response packet with detailed information
  */
 function parseResponse(response: Buffer): {
   machineNumber: number
   statusCode: number
   commandId: number
   data: Buffer
+  statusText: string
 } {
   if (response[0] !== 0x1b || (response[1] !== 0x06 && response[1] !== 0x15)) {
     throw new Error("Invalid response format")
@@ -124,7 +161,9 @@ function parseResponse(response: Buffer): {
   const commandId = response[4]
   const data = response.slice(5, response.length - 3)
 
-  return { machineNumber, statusCode, commandId, data }
+  const statusText = STATUS_CODE_MAP[statusCode] || `未知状态码: 0x${statusCode.toString(16).toUpperCase()}`
+
+  return { machineNumber, statusCode, commandId, data, statusText }
 }
 
 /**
@@ -134,7 +173,7 @@ async function sendCommand(
   commandId: number,
   commandName: string,
   data: Buffer = Buffer.alloc(0),
-): Promise<{ success: boolean; statusCode: number; data: Buffer }> {
+): Promise<{ success: boolean; statusCode: number; data: Buffer; statusText?: string }> {
   return new Promise(async (resolve, reject) => {
     const connection = initTCPConnection()
 
@@ -145,13 +184,23 @@ async function sendCommand(
 
     const command = buildCommand(commandId, data)
 
+    const standardCommandName = COMMAND_NAME_MAP[commandId] || commandName
+
     // Log sent command
     addLog({
       direction: "send",
       commandId: `0x${commandId.toString(16).toUpperCase().padStart(2, "0")}`,
-      commandName,
-      data: data.toString("utf8"),
+      commandName: standardCommandName,
+      data: data.length > 0 ? data.toString("hex").toUpperCase() : "无数据",
       rawHex: command.toString("hex").toUpperCase(),
+      parsed: {
+        header: command.slice(0, 2).toString("hex").toUpperCase(),
+        machineNumber: command[2].toString(16).toUpperCase().padStart(2, "0"),
+        commandId: command[3].toString(16).toUpperCase().padStart(2, "0"),
+        data: data.toString("hex").toUpperCase() || "无",
+        footer: command.slice(-3, -1).toString("hex").toUpperCase(),
+        checksum: command[command.length - 1].toString(16).toUpperCase().padStart(2, "0"),
+      },
     })
 
     connection.write(command)
@@ -164,21 +213,32 @@ async function sendCommand(
     const handleData = (response: Buffer) => {
       clearTimeout(timeout)
 
-      // Log received response
-      addLog({
-        direction: "receive",
-        commandId: `0x${commandId.toString(16).toUpperCase().padStart(2, "0")}`,
-        commandName: `${commandName} Response`,
-        data: response.slice(5, response.length - 3).toString("utf8"),
-        rawHex: response.toString("hex").toUpperCase(),
-      })
-
       try {
         const parsed = parseResponse(response)
+
+        addLog({
+          direction: "receive",
+          commandId: `0x${parsed.commandId.toString(16).toUpperCase().padStart(2, "0")}`,
+          commandName: `${standardCommandName} 响应`,
+          data: parsed.data.length > 0 ? parsed.data.toString("hex").toUpperCase() : "无数据",
+          rawHex: response.toString("hex").toUpperCase(),
+          parsed: {
+            header: response.slice(0, 2).toString("hex").toUpperCase(),
+            machineNumber: `0x${parsed.machineNumber.toString(16).toUpperCase().padStart(2, "0")} (机号${parsed.machineNumber})`,
+            statusCode: `0x${parsed.statusCode.toString(16).toUpperCase().padStart(2, "0")} (${parsed.statusText})`,
+            commandId: `0x${parsed.commandId.toString(16).toUpperCase().padStart(2, "0")}`,
+            data: parsed.data.toString("hex").toUpperCase() || "无",
+            footer: response.slice(-3, -1).toString("hex").toUpperCase(),
+            checksum: response[response.length - 1].toString(16).toUpperCase().padStart(2, "0"),
+          },
+          statusText: parsed.statusText,
+        })
+
         resolve({
           success: parsed.statusCode === 0x00,
           statusCode: parsed.statusCode,
           data: parsed.data,
+          statusText: parsed.statusText,
         })
       } catch (error) {
         reject(error)
@@ -250,7 +310,6 @@ export async function getPrinterStatus() {
  */
 async function getCPUTemperature(): Promise<number> {
   try {
-    const { exec } = require("child_process")
     console.log("[v0] Attempting to read CPU temperature...")
 
     return new Promise((resolve) => {

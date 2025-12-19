@@ -47,6 +47,16 @@ interface CommunicationLog {
   commandName: string
   data: string
   rawHex: string
+  parsed?: {
+    header: string
+    machineNumber: string
+    statusCode?: string
+    commandId: string
+    data: string
+    footer: string
+    checksum: string
+  }
+  statusText?: string
 }
 
 interface PrinterConfig {
@@ -458,10 +468,10 @@ export default function PrinterControlPage() {
         <Card>
           <CardHeader>
             <CardTitle>通信日志</CardTitle>
-            <CardDescription>实时显示与喷码机的通信记录</CardDescription>
+            <CardDescription>实时显示与喷码机的通信记录，包含详细协议解析</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-3 max-h-96 overflow-y-auto">
+            <div className="space-y-3 max-h-[600px] overflow-y-auto">
               {logs && logs.length > 0 ? (
                 logs.map((log) => (
                   <div
@@ -470,7 +480,7 @@ export default function PrinterControlPage() {
                       log.direction === "send" ? "bg-blue-50 border-blue-200" : "bg-green-50 border-green-200"
                     }`}
                   >
-                    <div className="flex items-start justify-between mb-2">
+                    <div className="flex items-start justify-between mb-3">
                       <div className="flex items-center gap-2">
                         <Badge
                           variant={log.direction === "send" ? "default" : "secondary"}
@@ -478,23 +488,68 @@ export default function PrinterControlPage() {
                         >
                           {log.direction === "send" ? "发送" : "接收"}
                         </Badge>
-                        <span className="font-semibold">{log.commandName}</span>
-                        <code className="text-xs bg-white px-2 py-1 rounded">ID: {log.commandId}</code>
+                        <span className="font-semibold text-base">{log.commandName}</span>
+                        <code className="text-xs bg-white px-2 py-1 rounded border">{log.commandId}</code>
                       </div>
-                      <span className="text-xs text-muted-foreground">{log.timestamp}</span>
+                      <span className="text-xs text-muted-foreground font-mono">{log.timestamp}</span>
                     </div>
 
-                    <div className="grid gap-2 text-sm">
-                      <div>
-                        <span className="font-medium text-muted-foreground">数据:</span>
-                        <div className="mt-1 rounded bg-white p-2 font-mono text-xs break-all">
-                          {log.data || "无数据"}
+                    {log.direction === "receive" && log.statusText && (
+                      <div className="mb-3 p-2 bg-white rounded border">
+                        <span className="text-xs font-medium text-muted-foreground">状态: </span>
+                        <span
+                          className={`text-sm font-semibold ${
+                            log.statusText.includes("成功") ? "text-green-600" : "text-orange-600"
+                          }`}
+                        >
+                          {log.statusText}
+                        </span>
+                      </div>
+                    )}
+
+                    {log.parsed && (
+                      <div className="mb-3 space-y-2">
+                        <div className="text-xs font-medium text-muted-foreground mb-2">协议解析:</div>
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div className="bg-white p-2 rounded border">
+                            <span className="text-muted-foreground">报文头:</span>
+                            <code className="ml-2 font-mono font-semibold">{log.parsed.header}</code>
+                          </div>
+                          <div className="bg-white p-2 rounded border">
+                            <span className="text-muted-foreground">
+                              {log.direction === "send" ? "机号:" : "机号:"}
+                            </span>
+                            <code className="ml-2 font-mono font-semibold">{log.parsed.machineNumber}</code>
+                          </div>
+                          {log.direction === "receive" && log.parsed.statusCode && (
+                            <div className="bg-white p-2 rounded border col-span-2">
+                              <span className="text-muted-foreground">状态码:</span>
+                              <code className="ml-2 font-mono font-semibold">{log.parsed.statusCode}</code>
+                            </div>
+                          )}
+                          <div className="bg-white p-2 rounded border">
+                            <span className="text-muted-foreground">命令ID:</span>
+                            <code className="ml-2 font-mono font-semibold">{log.parsed.commandId}</code>
+                          </div>
+                          <div className="bg-white p-2 rounded border">
+                            <span className="text-muted-foreground">数据:</span>
+                            <code className="ml-2 font-mono font-semibold text-[10px]">{log.parsed.data || "无"}</code>
+                          </div>
+                          <div className="bg-white p-2 rounded border">
+                            <span className="text-muted-foreground">报文尾:</span>
+                            <code className="ml-2 font-mono font-semibold">{log.parsed.footer}</code>
+                          </div>
+                          <div className="bg-white p-2 rounded border">
+                            <span className="text-muted-foreground">校验码:</span>
+                            <code className="ml-2 font-mono font-semibold">{log.parsed.checksum}</code>
+                          </div>
                         </div>
                       </div>
-                      <div>
-                        <span className="font-medium text-muted-foreground">原始HEX:</span>
-                        <div className="mt-1 rounded bg-white p-2 font-mono text-xs break-all">{log.rawHex}</div>
-                      </div>
+                    )}
+
+                    <div>
+                      <span className="text-xs font-medium text-muted-foreground">原始报文:</span>
+                      <div className="mt-1 rounded bg-white p-2 font-mono text-xs break-all border">{log.rawHex}</div>
                     </div>
                   </div>
                 ))
