@@ -137,23 +137,26 @@ export default function PrinterControlPage() {
     }
   }
 
-  const handlePrint = async () => {
-    if (!qrUrl || !quantity) return
+  const handlePrint = async (content: any) => {
+    console.log("[v0] handlePrint called with content:", content)
+
+    if (!content) return
 
     setIsLoading(true)
     try {
       const response = await fetch("/api/printer/print", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          url: qrUrl,
-          quantity: Number.parseInt(quantity),
-        }),
+        body: JSON.stringify(content),
       })
 
       const result = await response.json()
+      console.log("[v0] Print result:", result)
+
       if (result.success) {
         mutateLogs()
+      } else {
+        console.error("[v0] Print failed:", result.error)
       }
     } catch (error) {
       console.error("[v0] Print error:", error)

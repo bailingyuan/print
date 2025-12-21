@@ -546,11 +546,11 @@ export async function executeDebugCommand(commandId: number, params: any = {}) {
 /**
  * Send QR code print command
  */
-export async function sendQRCodePrint(url: string, quantity: number) {
+export async function sendQRCodePrint(url: string, quantity: number, size = 3, x = 0, y = 0, errorLevel = "L") {
   try {
     console.log("[v0] Starting QR code print:", url, "x", quantity)
 
-    const qrData = buildQRCodeData(url)
+    const qrData = buildQRCodeData(url, size, x, y, errorLevel)
 
     // Send information file (command 0x1C)
     const infoName = "QR"
@@ -596,19 +596,22 @@ export async function sendQRCodePrint(url: string, quantity: number) {
 /**
  * Build QR code module data according to protocol 3.5.20.5
  */
-function buildQRCodeData(content: string): Buffer {
+function buildQRCodeData(content: string, size: number, x: number, y: number, errorLevel: string): Buffer {
   const contentBuf = Buffer.from(content, "utf8")
 
   // QR code module structure according to protocol
   const moduleType = Buffer.from([0x04]) // Module type: 4 = QR code
-  const xCoord = Buffer.from([0x00, 0x00]) // X coordinate (2 bytes)
-  const yCoord = Buffer.from([0x00, 0x00]) // Y coordinate (2 bytes)
-  const lineWidth = Buffer.from([0x03]) // Line width: 3 pixels
+  const xCoord = Buffer.alloc(2)
+  xCoord.writeUInt16BE(x)
+  const yCoord = Buffer.alloc(2)
+  yCoord.writeUInt16BE(y)
+  const lineWidth = Buffer.from([size]) // Line width: 1-4
 
   // Code type byte:
   // High 4 bits: QR code type (0=QR, 1=DataMatrix, 2=MicroQR, 3=PDF417)
   // Low 4 bits: Error correction level (0=L, 1=M, 2=Q, 3=H)
-  const codeType = Buffer.from([0x00]) // QR code + Level L
+  const errorLevelMap: Record<string, number> = { L: 0, M: 1, Q: 2, H: 3 }
+  const codeType = Buffer.from([errorLevelMap[errorLevel] || 0]) // QR code + error level
 
   const codeSize = Buffer.from([0x00]) // Auto size
   const direction = Buffer.from([0x00]) // 0° rotation + no inversion
@@ -632,6 +635,104 @@ function buildQRCodeData(content: string): Buffer {
     border,
     subModuleCount,
     subModuleType,
+    textLength,
+    contentBuf,
+  ])
+}
+
+/**
+ * Send text print command
+ */
+export async function sendTextPrint(content: string, fontSize = 24, x = 0, y = 0, rotation = 0) {
+  try {
+    console.log("[v0] Starting text print:", content)
+
+    const textData = buildTextData(content, fontSize, x, y, rotation)
+
+    // Send information file (command 0x1C)
+    const infoName = "TXT"
+    const infoNameBuf = Buffer.from(infoName, "utf8")
+
+    // Build complete data structure
+    const moduleData = Buffer.concat([
+      Buffer.from([0x01]), // Module count (1 text module)
+      textData, // Text module data
+    ])
+
+    const data = Buffer.concat([
+      Buffer.from([infoNameBuf.length]), // Info name length
+      infoNameBuf, // Info name
+      moduleData,
+    ])
+
+    // Add data length prefix (3 bytes, big endian)
+    const dataLength = Buffer.alloc(3)
+    dataLength.writeUIntBE(data.length, 0, 3)
+    const fullData = Buffer.concat([dataLength, data])
+
+    console.log("[v0] Text data:", fullData.toString("hex").toUpperCase())
+
+    // Send the information file
+    await sendCommand(0x1c, "发送信息文件", fullData)
+
+    // Wait a bit for the printer to process
+    await new Promise((resolve) => setTimeout(resolve, 500))
+
+    // Send print command (command 0x01) to update print content
+    await sendCommand(0x01, "发送打印")
+
+    console.log("[v0] Text sent successfully")
+
+    return { success: true }
+  } catch (error) {
+    console.error("[v0] Text print error:", error)
+    return { success: false, error: "Failed to print text" }
+  }
+}
+
+/**
+ * Build text module data according to protocol 3.5.20.1
+ */
+function buildTextData(content: string, fontSize: number, x: number, y: number, rotation: number): Buffer {
+  const contentBuf = Buffer.from(content, "utf8")
+
+  // Text module structure according to protocol
+  const moduleType = Buffer.from([0x00]) // Module type: 0 = Text
+  const xCoord = Buffer.alloc(2)
+  xCoord.writeUInt16BE(x)
+  const yCoord = Buffer.alloc(2)
+  yCoord.writeUInt16BE(y)
+
+  // Font size (2 bytes)
+  const fontSizeBuf = Buffer.alloc(2)
+  fontSizeBuf.writeUInt16BE(fontSize)
+
+  // Direction byte:
+  // Bit 0-1: Rotation (0=0°, 1=90°, 2=180°, 3=270°)
+  // Bit 2: Horizontal flip
+  // Bit 3: Vertical flip
+  const rotationMap: Record<number, number> = { 0: 0, 90: 1, 180: 2, 270: 3 }
+  const directionByte = rotationMap[rotation] || 0
+  const direction = Buffer.from([directionByte])
+
+  // Font attributes
+  const fontType = Buffer.from([0x00]) // Default font
+  const fontStyle = Buffer.from([0x00]) // Normal style
+  const fontSpacing = Buffer.from([0x00]) // Default spacing
+
+  // Text length and content
+  const textLength = Buffer.alloc(2)
+  textLength.writeUInt16BE(contentBuf.length)
+
+  return Buffer.concat([
+    moduleType,
+    xCoord,
+    yCoord,
+    fontSizeBuf,
+    direction,
+    fontType,
+    fontStyle,
+    fontSpacing,
     textLength,
     contentBuf,
   ])
