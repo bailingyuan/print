@@ -106,15 +106,13 @@ export function buildCommand(commandId: number, data: Buffer): Buffer {
   const commandIdBuf = Buffer.from([commandId])
   const footer = Buffer.from([0x1b, 0x03]) // ESC ETX
 
-  // For command 0x1C, data already contains length prefix
-  // For other commands, data is sent as-is
   const commandData = Buffer.concat([header, machineNumber, commandIdBuf, data, footer])
 
-  // Calculate checksum (XOR of all bytes except checksum itself)
-  let checksum = 0
-  for (let i = 0; i < commandData.length; i++) {
-    checksum ^= commandData[i]
-  }
+  const checksum = calculateChecksum(commandData)
+
+  console.log(`[v0] Built command 0x${commandId.toString(16).toUpperCase().padStart(2, "0")}:`)
+  console.log(`[v0]   Command data (hex): ${commandData.toString("hex").toUpperCase()}`)
+  console.log(`[v0]   Checksum: 0x${checksum.toString(16).toUpperCase().padStart(2, "0")}`)
 
   return Buffer.concat([commandData, Buffer.from([checksum])])
 }
