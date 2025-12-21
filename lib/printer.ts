@@ -263,19 +263,32 @@ async function sendCommand(
     console.log("  Header: 1B02 (报文开始)")
     console.log("  Machine Number:", command[2].toString(16).toUpperCase().padStart(2, "0"))
     console.log("  Command ID:", command[3].toString(16).toUpperCase().padStart(2, "0"), `(${standardCommandName})`)
+    console.log("  Data length:", data.length, "bytes")
     console.log("  Data:", data.toString("hex").toUpperCase() || "无")
     console.log("  Footer: 1B03 (报文结束)")
     console.log("  Checksum:", command[command.length - 1].toString(16).toUpperCase().padStart(2, "0"))
 
-    connection.write(command)
+    // Check if command size is too large
+    console.log("[v0] Command size:", command.length, "bytes")
+    if (command.length > 1024) {
+      console.warn("[v0] WARNING: Large command size may cause issues")
+    }
 
-    // Handle response chunks
+    // Check if write is successful
+    const writeResult = connection.write(command)
+    console.log("[v0] Write result:", writeResult)
+    if (!writeResult) {
+      console.warn("[v0] WARNING: Write buffer full, data queued")
+    }
+
+    // Increase timeout time to handle large data packets
     const timeout = setTimeout(() => {
       connection.removeListener("data", handleData)
       connection.removeListener("error", handleError)
       connection.removeListener("close", handleClose)
+      console.error("[v0] Response timeout after 15 seconds")
       reject(new Error("Response timeout"))
-    }, 5000)
+    }, 15000)
 
     let responseBuffer = Buffer.alloc(0)
 
