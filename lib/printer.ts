@@ -642,8 +642,10 @@ function buildQRCodeData(content: string, size: number, x: number, y: number, er
   const yCoord = Buffer.alloc(2)
   yCoord.writeUInt16BE(y & 0x7fff)
 
-  // 线条宽度 (1字节，范围03-0F)
-  const lineWidth = Buffer.from([Math.max(3, Math.min(15, size))])
+  // 例如：size=3 应该发送 30 (代表3.0像素)，而不是 3 (代表0.3像素)
+  // 范围限制：3-150 (对应0.3-15.0像素)
+  const lineWidthValue = Math.max(30, Math.min(150, size * 10))
+  const lineWidth = Buffer.from([lineWidthValue])
 
   // 条码类型(高4位) + 容错级别(低4位) (1字节)
   // 条码类型: 0=QRcode
@@ -653,7 +655,9 @@ function buildQRCodeData(content: string, size: number, x: number, y: number, er
   const codeTypeByte = (0 << 4) | errorLevelValue
   const codeType = Buffer.from([codeTypeByte])
 
-  console.log(`[v0]   Line Width: 0x${lineWidth[0].toString(16).padStart(2, "0")}`)
+  console.log(
+    `[v0]   Line Width: 0x${lineWidth[0].toString(16).padStart(2, "0")} (${lineWidthValue}/10 = ${lineWidthValue / 10} pixels)`,
+  )
   console.log(
     `[v0]   Code Type Byte: 0x${codeTypeByte.toString(16).padStart(2, "0")} (Type: 0, Error Level: ${errorLevelValue})`,
   )

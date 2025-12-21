@@ -113,16 +113,17 @@ export function ContentEditor({
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="qr-size">二维码大小</Label>
+                <Label htmlFor="qr-size">线条宽度 (像素)</Label>
                 <Select value={qrSize} onValueChange={setQrSize}>
                   <SelectTrigger id="qr-size">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="1">小 (1)</SelectItem>
-                    <SelectItem value="2">中 (2)</SelectItem>
-                    <SelectItem value="3">大 (3)</SelectItem>
-                    <SelectItem value="4">超大 (4)</SelectItem>
+                    <SelectItem value="1">1px (最小)</SelectItem>
+                    <SelectItem value="2">2px (小)</SelectItem>
+                    <SelectItem value="3">3px (中)</SelectItem>
+                    <SelectItem value="4">4px (大)</SelectItem>
+                    <SelectItem value="5">5px (超大)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -265,7 +266,7 @@ export function ContentEditor({
               <span className="font-medium">参数说明:</span>
             </p>
             <p>• X/Y坐标: 设置内容在打印区域的位置 (像素)</p>
-            <p>• 二维码大小: 1-4级别，数值越大二维码越大</p>
+            <p>• 线条宽度: 二维码单元格大小，1-5像素</p>
             <p>• 容错级别: L(7%) &lt; M(15%) &lt; Q(25%) &lt; H(30%)</p>
             <p>• 字体大小: 5-400范围，根据实际需求调整</p>
           </CardContent>
