@@ -9,7 +9,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
-import { Send, Play, Square, Type, QrCode, Zap } from "lucide-react"
+import { Send, Play, Square, Type, QrCode } from "lucide-react"
+import { QRPreview } from "./qr-preview"
 
 interface ContentEditorProps {
   onPrint: (content: any) => Promise<void>
@@ -102,6 +103,8 @@ export function ContentEditor({
           </TabsList>
 
           <TabsContent value="qrcode" className="space-y-4">
+            <QRPreview content={qrUrl} size={Number.parseInt(qrSize)} errorLevel={qrErrorLevel} inverse={qrInverse} />
+
             <div className="space-y-2">
               <Label htmlFor="qr-url">URL链接</Label>
               <Input
@@ -330,35 +333,15 @@ export function ContentEditor({
 
         <div className="space-y-2">
           <div className="flex gap-2">
-            <Button
-              variant="outline"
-              className="flex-1 bg-transparent"
-              onClick={onStartPrinting}
-              disabled={printing || !connected || isLoading}
-            >
+            <Button variant="outline" className="flex-1 bg-transparent" onClick={onStartPrinting} disabled={!connected}>
               <Play className="mr-2 h-4 w-4" />
               启动喷印
             </Button>
-            <Button
-              variant="outline"
-              className="flex-1 bg-transparent"
-              onClick={onStopPrinting}
-              disabled={!printing || !connected || isLoading}
-            >
+            <Button variant="outline" className="flex-1 bg-transparent" onClick={onStopPrinting} disabled={!connected}>
               <Square className="mr-2 h-4 w-4" />
               停止喷印
             </Button>
           </div>
-
-          <Button
-            variant="default"
-            className="w-full"
-            onClick={onTriggerPrint}
-            disabled={!printing || !connected || isLoading}
-          >
-            <Zap className="mr-2 h-4 w-4" />
-            触发喷印
-          </Button>
         </div>
 
         <Card className="bg-blue-50 border-blue-200">
