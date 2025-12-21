@@ -100,14 +100,23 @@ function calculateChecksum(data: Buffer): number {
 /**
  * Build command packet with configurable machine number
  */
-function buildCommand(commandId: number, data: Buffer = Buffer.alloc(0)): Buffer {
-  const header = Buffer.from([0x1b, 0x02, connectionConfig.machineNumber, commandId])
-  const footer = Buffer.from([0x1b, 0x03])
+export function buildCommand(commandId: number, data: Buffer): Buffer {
+  const header = Buffer.from([0x1b, 0x02]) // ESC STX
+  const machineNumber = Buffer.from([connectionConfig.machineNumber || 0x00])
+  const commandIdBuf = Buffer.from([commandId])
+  const footer = Buffer.from([0x1b, 0x03]) // ESC ETX
 
-  const packet = Buffer.concat([header, data, footer])
-  const checksum = calculateChecksum(packet)
+  // For command 0x1C, data already contains length prefix
+  // For other commands, data is sent as-is
+  const commandData = Buffer.concat([header, machineNumber, commandIdBuf, data, footer])
 
-  return Buffer.concat([packet, Buffer.from([checksum])])
+  // Calculate checksum (XOR of all bytes except checksum itself)
+  let checksum = 0
+  for (let i = 0; i < commandData.length; i++) {
+    checksum ^= commandData[i]
+  }
+
+  return Buffer.concat([commandData, Buffer.from([checksum])])
 }
 
 const STATUS_CODE_MAP: Record<number, string> = {
@@ -468,14 +477,18 @@ export async function startPrinting() {
  */
 export async function stopPrinting() {
   try {
+    console.log("[v0] Stopping printing...")
     const response = await sendCommand(0x12, "停止喷印")
+    console.log("[v0] Stop response:", response)
+
     if (response.success) {
       printerState.printing = false
+      console.log("[v0] Printing stopped successfully")
     }
     return { success: response.success }
   } catch (error) {
     console.error("[v0] Stop printing error:", error)
-    return { success: false, error: "Failed to stop printing" }
+    return { success: false, error: `停止喷印失败: ${error}` }
   }
 }
 
@@ -548,48 +561,65 @@ export async function executeDebugCommand(commandId: number, params: any = {}) {
  */
 export async function sendQRCodePrint(url: string, quantity: number, size = 3, x = 0, y = 0, errorLevel = "L") {
   try {
-    console.log("[v0] Starting QR code print:", url, "x", quantity)
+    console.log("[v0] Starting QR code print:", { url, quantity, size, x, y, errorLevel })
+
+    if (!url || url.trim() === "") {
+      console.error("[v0] URL is empty")
+      return { success: false, error: "URL不能为空" }
+    }
 
     const qrData = buildQRCodeData(url, size, x, y, errorLevel)
+    console.log("[v0] Built QR module data (hex):", qrData.toString("hex").toUpperCase())
+    console.log("[v0] QR module data length:", qrData.length)
 
     // Send information file (command 0x1C)
     const infoName = "QR"
     const infoNameBuf = Buffer.from(infoName, "utf8")
 
-    // Build complete data structure
-    const moduleData = Buffer.concat([
-      Buffer.from([0x01]), // Module count (1 QR code module)
-      qrData, // QR code module data
+    const dataContent = Buffer.concat([
+      Buffer.from([infoNameBuf.length]), // 信息名称字节数
+      infoNameBuf, // 信息名称
+      Buffer.from([0x01]), // 模块总数 (1个二维码模块)
+      qrData, // 二维码模块数据
     ])
 
-    const data = Buffer.concat([
-      Buffer.from([infoNameBuf.length]), // Info name length
-      infoNameBuf, // Info name
-      moduleData,
-    ])
-
-    // Add data length prefix (3 bytes, big endian)
+    // 数据长度 = dataContent的长度（3字节，大端序）
+    // 注意：数据长度字段本身不计入长度值中
     const dataLength = Buffer.alloc(3)
-    dataLength.writeUIntBE(data.length, 0, 3)
-    const fullData = Buffer.concat([dataLength, data])
+    dataLength.writeUIntBE(dataContent.length, 0, 3)
 
-    console.log("[v0] QR code data:", fullData.toString("hex").toUpperCase())
+    const fullData = Buffer.concat([dataLength, dataContent])
+
+    console.log("[v0] === QR Code Data Breakdown ===")
+    console.log("[v0] Data length (3 bytes):", dataLength.toString("hex").toUpperCase(), "=", dataContent.length)
+    console.log("[v0] Info name length:", infoNameBuf.length)
+    console.log("[v0] Info name:", infoName)
+    console.log("[v0] Module count: 1")
+    console.log("[v0] Module data length:", qrData.length)
+    console.log("[v0] Full data (hex):", fullData.toString("hex").toUpperCase())
+    console.log("[v0] Full data length:", fullData.length)
 
     // Send the information file
-    await sendCommand(0x1c, "发送信息文件", fullData)
+    const infoResult = await sendCommand(0x1c, "发送信息文件", fullData)
+    console.log("[v0] Info file send result:", infoResult)
+
+    if (!infoResult.success) {
+      return { success: false, error: `发送信息文件失败: 状态码 0x${infoResult.statusCode.toString(16)}` }
+    }
 
     // Wait a bit for the printer to process
     await new Promise((resolve) => setTimeout(resolve, 500))
 
     // Send print command (command 0x01) to update print content
-    await sendCommand(0x01, "发送打印")
+    const printResult = await sendCommand(0x01, "发送打印")
+    console.log("[v0] Print command result:", printResult)
 
     console.log("[v0] QR code sent successfully, quantity:", quantity)
 
     return { success: true }
   } catch (error) {
     console.error("[v0] QR code print error:", error)
-    return { success: false, error: "Failed to print QR code" }
+    return { success: false, error: `打印二维码失败: ${error}` }
   }
 }
 
@@ -599,30 +629,44 @@ export async function sendQRCodePrint(url: string, quantity: number, size = 3, x
 function buildQRCodeData(content: string, size: number, x: number, y: number, errorLevel: string): Buffer {
   const contentBuf = Buffer.from(content, "utf8")
 
-  // QR code module structure according to protocol
-  const moduleType = Buffer.from([0x04]) // Module type: 4 = QR code
+  // 二维码模块结构 (根据协议文档 3.5.20.5)
+  const moduleType = Buffer.from([0x04]) // 模块类型: 04 = 二维码
+
+  // X/Y坐标 (2字节，大端序)
   const xCoord = Buffer.alloc(2)
-  xCoord.writeUInt16BE(x)
+  xCoord.writeUInt16BE(x & 0x7fff) // bit15=0表示正数
   const yCoord = Buffer.alloc(2)
-  yCoord.writeUInt16BE(y)
-  const lineWidth = Buffer.from([size]) // Line width: 1-4
+  yCoord.writeUInt16BE(y & 0x7fff)
 
-  // Code type byte:
-  // High 4 bits: QR code type (0=QR, 1=DataMatrix, 2=MicroQR, 3=PDF417)
-  // Low 4 bits: Error correction level (0=L, 1=M, 2=Q, 3=H)
+  // 线条宽度 (1字节，范围03-0F)
+  const lineWidth = Buffer.from([Math.max(3, Math.min(15, size))])
+
+  // 条码类型(高4位) + 容错级别(低4位) (1字节)
+  // 条码类型: 0=QRcode
+  // 容错级别: 0=L, 1=M, 2=Q, 3=H
   const errorLevelMap: Record<string, number> = { L: 0, M: 1, Q: 2, H: 3 }
-  const codeType = Buffer.from([errorLevelMap[errorLevel] || 0]) // QR code + error level
+  const codeTypeByte = (0 << 4) | (errorLevelMap[errorLevel] || 0)
+  const codeType = Buffer.from([codeTypeByte])
 
-  const codeSize = Buffer.from([0x00]) // Auto size
-  const direction = Buffer.from([0x00]) // 0° rotation + no inversion
-  const border = Buffer.from([0x00]) // No border
+  // 条码尺寸 (1字节，00=Auto)
+  const codeSize = Buffer.from([0x00])
 
-  // Sub-modules count (1 for text content)
-  const subModuleCount = Buffer.from([0x01])
+  // 条码方向(高4位) + 反色选择(低4位) (1字节)
+  // 方向: 0=0°
+  // 反色: 0=正常
+  const direction = Buffer.from([0x00])
 
-  // Sub-module: Text content
-  const subModuleType = Buffer.from([0x01]) // Type 1 = Text
-  const textLength = Buffer.from([contentBuf.length])
+  // 边框样式(高4位) + 边框尺寸(低4位) (1字节)
+  // 样式: 0=无边框
+  // 尺寸: 0
+  const border = Buffer.from([0x00])
+
+  // 插入子模块数 (1字节)
+  const subModuleCount = Buffer.from([0x01]) // 1个子模块
+
+  // 子文本模块 (子模块类型01)
+  const subModuleType = Buffer.from([0x01]) // 类型01 = 文本
+  const textLength = Buffer.from([contentBuf.length]) // 文本字节数
 
   return Buffer.concat([
     moduleType,
@@ -645,96 +689,112 @@ function buildQRCodeData(content: string, size: number, x: number, y: number, er
  */
 export async function sendTextPrint(content: string, fontSize = 24, x = 0, y = 0, rotation = 0) {
   try {
-    console.log("[v0] Starting text print:", content)
+    console.log("[v0] Starting text print:", { content, fontSize, x, y, rotation })
+
+    if (!content || content.trim() === "") {
+      console.error("[v0] Text content is empty")
+      return { success: false, error: "文本内容不能为空" }
+    }
 
     const textData = buildTextData(content, fontSize, x, y, rotation)
+    console.log("[v0] Built text module data (hex):", textData.toString("hex").toUpperCase())
+    console.log("[v0] Text module data length:", textData.length)
 
     // Send information file (command 0x1C)
     const infoName = "TXT"
     const infoNameBuf = Buffer.from(infoName, "utf8")
 
-    // Build complete data structure
-    const moduleData = Buffer.concat([
-      Buffer.from([0x01]), // Module count (1 text module)
-      textData, // Text module data
+    const dataContent = Buffer.concat([
+      Buffer.from([infoNameBuf.length]), // 信息名称字节数
+      infoNameBuf, // 信息名称
+      Buffer.from([0x01]), // 模块总数 (1个文本模块)
+      textData, // 文本模块数据
     ])
 
-    const data = Buffer.concat([
-      Buffer.from([infoNameBuf.length]), // Info name length
-      infoNameBuf, // Info name
-      moduleData,
-    ])
-
-    // Add data length prefix (3 bytes, big endian)
+    // 数据长度 = dataContent的长度（3字节，大端序）
     const dataLength = Buffer.alloc(3)
-    dataLength.writeUIntBE(data.length, 0, 3)
-    const fullData = Buffer.concat([dataLength, data])
+    dataLength.writeUIntBE(dataContent.length, 0, 3)
 
-    console.log("[v0] Text data:", fullData.toString("hex").toUpperCase())
+    const fullData = Buffer.concat([dataLength, dataContent])
+
+    console.log("[v0] === Text Data Breakdown ===")
+    console.log("[v0] Data length (3 bytes):", dataLength.toString("hex").toUpperCase(), "=", dataContent.length)
+    console.log("[v0] Info name length:", infoNameBuf.length)
+    console.log("[v0] Info name:", infoName)
+    console.log("[v0] Module count: 1")
+    console.log("[v0] Module data length:", textData.length)
+    console.log("[v0] Full data (hex):", fullData.toString("hex").toUpperCase())
+    console.log("[v0] Full data length:", fullData.length)
 
     // Send the information file
-    await sendCommand(0x1c, "发送信息文件", fullData)
+    const infoResult = await sendCommand(0x1c, "发送信息文件", fullData)
+    console.log("[v0] Info file send result:", infoResult)
+
+    if (!infoResult.success) {
+      return { success: false, error: `发送信息文件失败: 状态码 0x${infoResult.statusCode.toString(16)}` }
+    }
 
     // Wait a bit for the printer to process
     await new Promise((resolve) => setTimeout(resolve, 500))
 
     // Send print command (command 0x01) to update print content
-    await sendCommand(0x01, "发送打印")
+    const printResult = await sendCommand(0x01, "发送打印")
+    console.log("[v0] Print command result:", printResult)
 
     console.log("[v0] Text sent successfully")
 
     return { success: true }
   } catch (error) {
     console.error("[v0] Text print error:", error)
-    return { success: false, error: "Failed to print text" }
+    return { success: false, error: `打印文本失败: ${error}` }
   }
 }
 
 /**
- * Build text module data according to protocol 3.5.20.1
+ * Build text module data according to protocol 3.5.20.2
  */
 function buildTextData(content: string, fontSize: number, x: number, y: number, rotation: number): Buffer {
   const contentBuf = Buffer.from(content, "utf8")
 
-  // Text module structure according to protocol
-  const moduleType = Buffer.from([0x00]) // Module type: 0 = Text
+  // 文本模块结构 (根据协议文档 3.5.20.2)
+  const moduleType = Buffer.from([0x01]) // 模块类型: 01 = 文本
+
+  // X/Y坐标 (2字节，大端序)
   const xCoord = Buffer.alloc(2)
-  xCoord.writeUInt16BE(x)
+  xCoord.writeUInt16BE(x & 0x7fff) // bit15=0表示正数
   const yCoord = Buffer.alloc(2)
-  yCoord.writeUInt16BE(y)
+  yCoord.writeUInt16BE(y & 0x7fff)
 
-  // Font size (2 bytes)
+  // 设置方向 (2字节，0-359度)
+  const directionBuf = Buffer.alloc(2)
+  directionBuf.writeUInt16BE(rotation % 360)
+
+  // 调整间距 (1字节，05=默认值0)
+  const spacing = Buffer.from([0x05])
+
+  // 字体大小 (2字节，范围5-1200)
   const fontSizeBuf = Buffer.alloc(2)
-  fontSizeBuf.writeUInt16BE(fontSize)
+  fontSizeBuf.writeUInt16BE(Math.max(5, Math.min(1200, fontSize)))
 
-  // Direction byte:
-  // Bit 0-1: Rotation (0=0°, 1=90°, 2=180°, 3=270°)
-  // Bit 2: Horizontal flip
-  // Bit 3: Vertical flip
-  const rotationMap: Record<number, number> = { 0: 0, 90: 1, 180: 2, 270: 3 }
-  const directionByte = rotationMap[rotation] || 0
-  const direction = Buffer.from([directionByte])
+  // 字体名 (使用默认字体"Arial")
+  const fontName = Buffer.from("Arial", "utf8")
+  const fontNameLength = Buffer.from([fontName.length])
 
-  // Font attributes
-  const fontType = Buffer.from([0x00]) // Default font
-  const fontStyle = Buffer.from([0x00]) // Normal style
-  const fontSpacing = Buffer.from([0x00]) // Default spacing
-
-  // Text length and content
-  const textLength = Buffer.alloc(2)
-  textLength.writeUInt16BE(contentBuf.length)
+  // 文本字节数 (1字节，最大64)
+  const textLength = Buffer.from([Math.min(contentBuf.length, 64)])
+  const textContent = contentBuf.slice(0, 64) // 限制最大长度
 
   return Buffer.concat([
     moduleType,
     xCoord,
     yCoord,
+    directionBuf,
+    spacing,
     fontSizeBuf,
-    direction,
-    fontType,
-    fontStyle,
-    fontSpacing,
+    fontNameLength,
+    fontName,
     textLength,
-    contentBuf,
+    textContent,
   ])
 }
 

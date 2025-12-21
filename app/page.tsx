@@ -140,7 +140,10 @@ export default function PrinterControlPage() {
   const handlePrint = async (content: any) => {
     console.log("[v0] handlePrint called with content:", content)
 
-    if (!content) return
+    if (!content) {
+      console.error("[v0] No content provided")
+      return
+    }
 
     setIsLoading(true)
     try {
@@ -155,11 +158,14 @@ export default function PrinterControlPage() {
 
       if (result.success) {
         mutateLogs()
+        mutateStatus()
       } else {
         console.error("[v0] Print failed:", result.error)
+        alert(`打印失败: ${result.error || "未知错误"}`)
       }
     } catch (error) {
       console.error("[v0] Print error:", error)
+      alert(`打印错误: ${error}`)
     } finally {
       setIsLoading(false)
     }
@@ -192,11 +198,22 @@ export default function PrinterControlPage() {
   }
 
   const handleStopPrinting = async () => {
+    console.log("[v0] handleStopPrinting called")
     try {
-      await fetch("/api/printer/stop", { method: "POST" })
-      mutateLogs()
+      const response = await fetch("/api/printer/stop", { method: "POST" })
+      const result = await response.json()
+      console.log("[v0] Stop result:", result)
+
+      if (result.success) {
+        mutateLogs()
+        mutateStatus()
+      } else {
+        console.error("[v0] Stop failed:", result.error)
+        alert(`停止失败: ${result.error || "未知错误"}`)
+      }
     } catch (error) {
       console.error("[v0] Stop printing error:", error)
+      alert(`停止错误: ${error}`)
     }
   }
 
@@ -457,7 +474,7 @@ export default function PrinterControlPage() {
           </Card>
 
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardHeader>
               <CardTitle className="text-sm font-medium">打印状态</CardTitle>
               <Printer className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
