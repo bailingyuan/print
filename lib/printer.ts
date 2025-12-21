@@ -577,95 +577,112 @@ export async function executeDebugCommand(commandId: number, params: any = {}) {
  * Send QR code print command
  */
 export async function sendQRCodePrint(
-  url: string,
-  quantity: number,
-  size = 3,
-  errorLevel: "L" | "M" | "Q" | "H" = "H",
-  x = 0,
-  y = 0,
-  codeType = 0,
-  codeSize = 0,
-  rotation = 0,
-  inverse = false,
-  borderStyle = 0,
-  borderSize = 0,
-): Promise<any> {
-  console.log("[v0] Sending QR Code Print:", {
-    url,
-    quantity,
+  content: string,
+  size: number,
+  x: number,
+  y: number,
+  rotation: number,
+  errorLevel: "L" | "M" | "Q" | "H",
+  codeType: number,
+  codeSize: number,
+  inverse: boolean,
+  borderStyle: number,
+  borderSize: number,
+): Promise<{ success: boolean; statusCode?: number; error?: string; data?: Buffer }> {
+  console.log("[v0] ========== 开始发送二维码打印 ==========")
+  console.log("[v0] QR Print Parameters:", {
+    content,
     size,
-    errorLevel,
     x,
     y,
+    rotation,
+    errorLevel,
     codeType,
     codeSize,
-    rotation,
     inverse,
     borderStyle,
     borderSize,
   })
 
-  // 构建二维码数据（按手册规范）
-  const qrData = buildQRCodeData(
-    url,
-    size,
-    x,
-    y,
-    rotation,
-    errorLevel,
-    codeType,
-    codeSize,
-    inverse,
-    borderStyle,
-    borderSize,
-  )
+  try {
+    const qrModuleData = buildQRCodeData(
+      content,
+      size,
+      x,
+      y,
+      rotation,
+      errorLevel,
+      codeType,
+      codeSize,
+      inverse,
+      borderStyle,
+      borderSize,
+    )
 
-  // 信息名称：默认 "QR"
-  const infoName = Buffer.from("QR", "utf8")
-  const infoNameLength = Buffer.from([infoName.length])
+    // 信息名称 "QR"
+    const infoName = "QR"
+    const infoNameBuf = Buffer.from(infoName, "utf8")
+    const infoNameLength = infoNameBuf.length
 
-  // 模块总数：1
-  const moduleCount = Buffer.from([0x01])
+    // 模块总数
+    const moduleCount = 0x01
 
-  const dataContent = Buffer.concat([infoNameLength, infoName, moduleCount, qrData])
+    const contentData = Buffer.concat([
+      Buffer.from([infoNameLength]),
+      infoNameBuf,
+      Buffer.from([moduleCount]),
+      qrModuleData,
+    ])
 
-  const dataLength = Buffer.alloc(3)
-  dataLength.writeUIntBE(dataContent.length, 0, 3)
+    const dataLength = contentData.length
+    const dataLengthBuf = Buffer.alloc(3)
+    dataLengthBuf.writeUIntBE(dataLength, 0, 3)
 
-  // 组装完整数据：数据长度 + 数据内容
-  const fullData = Buffer.concat([dataLength, dataContent])
+    const fullData = Buffer.concat([dataLengthBuf, contentData])
 
-  console.log("[v0] === QR Code Data Breakdown ===")
-  console.log("[v0] Data length (3 bytes):", dataLength.toString("hex").toUpperCase(), "=", dataContent.length, "bytes")
-  console.log("[v0] Info name length:", infoName.length)
-  console.log("[v0] Info name:", infoName.toString())
-  console.log("[v0] Module count:", moduleCount[0])
-  console.log("[v0] QR module data length:", qrData.length, "bytes")
-  console.log("[v0] Full data to send (hex):", fullData.toString("hex").toUpperCase())
-  console.log("[v0] Full data length:", fullData.length, "bytes")
+    console.log("[v0] ========== 二维码数据包详情 ==========")
+    console.log("[v0] Data Length (3 bytes):", dataLength, "->", dataLengthBuf.toString("hex"))
+    console.log("[v0] Info Name Length:", infoNameLength)
+    console.log("[v0] Info Name:", infoName)
+    console.log("[v0] Module Count:", moduleCount)
+    console.log("[v0] QR Module Data Length:", qrModuleData.length, "bytes")
+    console.log("[v0] Full Data Length:", fullData.length, "bytes")
+    console.log("[v0] Full Data (hex):", fullData.toString("hex"))
+    console.log("[v0] ==========================================")
 
-  // 发送命令 0x1C (发送信息文件)
-  const result = await sendCommand(0x1c, "发送信息文件", fullData)
-  console.log("[v0] Info file send result:", result)
+    // 发送命令 0x1C (发送信息文件)
+    const result = await sendCommand(0x1c, "发送信息文件", fullData)
 
-  if (!result.success) {
-    throw new Error(`发送信息文件失败: ${result.statusText}`)
+    console.log("[v0] Info file send result:", result)
+
+    if (!result.success) {
+      return {
+        success: false,
+        statusCode: result.statusCode,
+        error: `状态码 0x${result.statusCode?.toString(16)}: ${getStatusText(result.statusCode || 0)}`,
+      }
+    }
+
+    const printResult = await sendCommand(0x01, "发送打印", Buffer.from([0x00, 0x0a]))
+    console.log("[v0] Print command result:", printResult)
+
+    if (!printResult.success) {
+      return {
+        success: false,
+        statusCode: printResult.statusCode,
+        error: `打印命令失败: 状态码 0x${printResult.statusCode?.toString(16)}`,
+      }
+    }
+
+    console.log("[v0] ========== 二维码打印成功 ==========")
+    return { success: true, statusCode: 0 }
+  } catch (error) {
+    console.error("[v0] QR Code print error:", error)
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    }
   }
-
-  // 发送命令 0x01 (发送打印)
-  const printData = Buffer.from([
-    0x00, // 信息列数 (0=默认)
-    quantity & 0xff, // 打印数量
-  ])
-
-  const printResult = await sendCommand(0x01, "发送打印", printData)
-  console.log("[v0] Print command result:", printResult)
-
-  if (!printResult.success) {
-    throw new Error(`发送打印命令失败: ${printResult.statusText}`)
-  }
-
-  return { infoResult: result, printResult }
 }
 
 /**
@@ -678,11 +695,11 @@ function buildQRCodeData(
   y: number,
   rotation: number,
   errorLevel: "L" | "M" | "Q" | "H",
-  codeType = 0, // 0=QRcode, 1=DataMatrix, etc.
-  codeSize = 0, // 0=Auto, 1-8对应不同尺寸
-  inverse = false, // 是否反色
-  borderStyle = 0, // 0=无边框, 1=上下边框, 2=四周边框
-  borderSize = 0, // 边框尺寸 0-15
+  codeType: number,
+  codeSize: number,
+  inverse: boolean,
+  borderStyle: number,
+  borderSize: number,
 ): Buffer {
   console.log("[v0] Building QR Code Data (按手册规范):", {
     content,
@@ -960,4 +977,11 @@ async function getCPUTemperature(): Promise<number> {
  */
 export async function triggerPrint() {
   return sendCommand(0x13, "触发喷印")
+}
+
+/**
+ * Get status text from status code
+ */
+function getStatusText(statusCode: number): string {
+  return STATUS_CODE_MAP[statusCode] || `未知状态码: 0x${statusCode.toString(16).toUpperCase()}`
 }

@@ -29,6 +29,10 @@ export async function POST(request: Request) {
         content.borderSize || 0,
       )
 
+      if (!result.success) {
+        return NextResponse.json(result, { status: 500 })
+      }
+
       return NextResponse.json(result)
     } else if (content.type === "text") {
       if (!content.content) {
@@ -43,12 +47,22 @@ export async function POST(request: Request) {
         content.rotation || 0,
       )
 
+      if (!result.success) {
+        return NextResponse.json(result, { status: 500 })
+      }
+
       return NextResponse.json(result)
     } else {
       return NextResponse.json({ success: false, error: "Invalid content type" }, { status: 400 })
     }
   } catch (error) {
     console.error("[v0] Print error:", error)
-    return NextResponse.json({ success: false, error: "Failed to send print command" }, { status: 500 })
+    return NextResponse.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : "Failed to send print command",
+      },
+      { status: 500 },
+    )
   }
 }
