@@ -11,6 +11,7 @@ export async function POST(request: NextRequest) {
         host: body.tcpHost,
         port: body.tcpPort,
       },
+      machineNumber: body.machineNumber,
     })
 
     // Update stepper motor config
@@ -38,6 +39,7 @@ export async function GET() {
     return NextResponse.json({
       tcpHost: connectionConfig.tcp?.host,
       tcpPort: connectionConfig.tcp?.port,
+      machineNumber: connectionConfig.machineNumber,
       stepperDirPin: stepperConfig.dirPin,
       stepperStepPin: stepperConfig.stepPin,
       stepperEnablePin: stepperConfig.enablePin,

@@ -21,7 +21,7 @@ interface ConnectionConfig {
   machineNumber: number
 }
 
-let connectionConfig: ConnectionConfig = {
+const connectionConfig: ConnectionConfig = {
   tcp: {
     host: "169.254.59.119",
     port: 139,
@@ -34,8 +34,14 @@ let tcpClient: Socket | null = null
 /**
  * Update connection configuration
  */
-export function updateConnectionConfig(config: ConnectionConfig) {
-  connectionConfig = config
+export function updateConnectionConfig(config: Partial<ConnectionConfig>) {
+  if (config.tcp) {
+    connectionConfig.tcp = config.tcp
+  }
+  if (config.machineNumber !== undefined) {
+    connectionConfig.machineNumber = config.machineNumber
+  }
+  console.log("[v0] Connection config updated:", connectionConfig)
   // Close existing connections
   if (tcpClient) {
     tcpClient.destroy()
@@ -621,10 +627,21 @@ export async function sendQRCodePrint(
   // 模块总数：1
   const moduleCount = Buffer.from([0x01])
 
-  // 组装完整数据
-  const fullData = Buffer.concat([infoNameLength, infoName, moduleCount, qrData])
+  const dataContent = Buffer.concat([infoNameLength, infoName, moduleCount, qrData])
 
-  console.log("[v0] Full data to send (hex):", fullData.toString("hex"))
+  const dataLength = Buffer.alloc(3)
+  dataLength.writeUIntBE(dataContent.length, 0, 3)
+
+  // 组装完整数据：数据长度 + 数据内容
+  const fullData = Buffer.concat([dataLength, dataContent])
+
+  console.log("[v0] === QR Code Data Breakdown ===")
+  console.log("[v0] Data length (3 bytes):", dataLength.toString("hex").toUpperCase(), "=", dataContent.length, "bytes")
+  console.log("[v0] Info name length:", infoName.length)
+  console.log("[v0] Info name:", infoName.toString())
+  console.log("[v0] Module count:", moduleCount[0])
+  console.log("[v0] QR module data length:", qrData.length, "bytes")
+  console.log("[v0] Full data to send (hex):", fullData.toString("hex").toUpperCase())
   console.log("[v0] Full data length:", fullData.length, "bytes")
 
   // 发送命令 0x1C (发送信息文件)
