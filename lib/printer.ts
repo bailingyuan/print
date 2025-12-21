@@ -557,154 +557,214 @@ export async function executeDebugCommand(commandId: number, params: any = {}) {
 /**
  * Send QR code print command
  */
-export async function sendQRCodePrint(url: string, quantity: number, size = 3, x = 0, y = 0, errorLevel = "L") {
-  try {
-    console.log("[v0] Starting QR code print:", { url, quantity, size, x, y, errorLevel })
+export async function sendQRCodePrint(
+  url: string,
+  quantity: number,
+  size = 3,
+  errorLevel: "L" | "M" | "Q" | "H" = "H",
+  x = 0,
+  y = 0,
+  codeType = 0,
+  codeSize = 0,
+  rotation = 0,
+  inverse = false,
+  borderStyle = 0,
+  borderSize = 0,
+): Promise<any> {
+  console.log("[v0] Sending QR Code Print:", {
+    url,
+    quantity,
+    size,
+    errorLevel,
+    x,
+    y,
+    codeType,
+    codeSize,
+    rotation,
+    inverse,
+    borderStyle,
+    borderSize,
+  })
 
-    if (!url || url.trim() === "") {
-      console.error("[v0] URL is empty")
-      return { success: false, error: "URL不能为空" }
-    }
+  // 构建二维码数据（按手册规范）
+  const qrData = buildQRCodeData(
+    url,
+    size,
+    x,
+    y,
+    rotation,
+    errorLevel,
+    codeType,
+    codeSize,
+    inverse,
+    borderStyle,
+    borderSize,
+  )
 
-    const qrData = buildQRCodeData(url, size, x, y, errorLevel)
-    console.log("[v0] Built QR module data (hex):", qrData.toString("hex").toUpperCase())
-    console.log("[v0] QR module data length:", qrData.length)
+  // 信息名称：默认 "QR"
+  const infoName = Buffer.from("QR", "utf8")
+  const infoNameLength = Buffer.from([infoName.length])
 
-    // Send information file (command 0x1C)
-    const infoName = "QR"
-    const infoNameBuf = Buffer.from(infoName, "utf8")
+  // 模块总数：1
+  const moduleCount = Buffer.from([0x01])
 
-    const dataContent = Buffer.concat([
-      Buffer.from([infoNameBuf.length]), // 信息名称字节数
-      infoNameBuf, // 信息名称
-      Buffer.from([0x01]), // 模块总数 (1个二维码模块)
-      qrData, // 二维码模块数据
-    ])
+  // 组装完整数据
+  const fullData = Buffer.concat([infoNameLength, infoName, moduleCount, qrData])
 
-    // 数据长度 = dataContent的长度（3字节，大端序）
-    // 注意：数据长度字段本身不计入长度值中
-    const dataLength = Buffer.alloc(3)
-    dataLength.writeUIntBE(dataContent.length, 0, 3)
+  console.log("[v0] Full data to send (hex):", fullData.toString("hex"))
+  console.log("[v0] Full data length:", fullData.length, "bytes")
 
-    const fullData = Buffer.concat([dataLength, dataContent])
+  // 发送命令 0x1C (发送信息文件)
+  const result = await sendCommand(0x1c, "发送信息文件", fullData)
+  console.log("[v0] Info file send result:", result)
 
-    console.log("[v0] === QR Code Data Breakdown ===")
-    console.log("[v0] Data length (3 bytes):", dataLength.toString("hex").toUpperCase(), "=", dataContent.length)
-    console.log("[v0] Info name length:", infoNameBuf.length)
-    console.log("[v0] Info name:", infoName)
-    console.log("[v0] Module count: 1")
-    console.log("[v0] Module data length:", qrData.length)
-    console.log("[v0] Full data (hex):", fullData.toString("hex").toUpperCase())
-    console.log("[v0] Full data length:", fullData.length)
-
-    // Send the information file
-    const infoResult = await sendCommand(0x1c, "发送信息文件", fullData)
-    console.log("[v0] Info file send result:", infoResult)
-
-    if (!infoResult.success) {
-      return { success: false, error: `发送信息文件失败: 状态码 0x${infoResult.statusCode.toString(16)}` }
-    }
-
-    // Wait a bit for the printer to process
-    await new Promise((resolve) => setTimeout(resolve, 500))
-
-    // Send print command (command 0x01) to update print content
-    const printResult = await sendCommand(0x01, "发送打印")
-    console.log("[v0] Print command result:", printResult)
-
-    console.log("[v0] QR code sent successfully, quantity:", quantity)
-
-    return { success: true }
-  } catch (error) {
-    console.error("[v0] QR code print error:", error)
-    return { success: false, error: `打印二维码失败: ${error}` }
+  if (!result.success) {
+    throw new Error(`发送信息文件失败: ${result.statusText}`)
   }
+
+  // 发送命令 0x01 (发送打印)
+  const printData = Buffer.from([
+    0x00, // 信息列数 (0=默认)
+    quantity & 0xff, // 打印数量
+  ])
+
+  const printResult = await sendCommand(0x01, "发送打印", printData)
+  console.log("[v0] Print command result:", printResult)
+
+  if (!printResult.success) {
+    throw new Error(`发送打印命令失败: ${printResult.statusText}`)
+  }
+
+  return { infoResult: result, printResult }
 }
 
 /**
  * Build QR code module data according to protocol 3.5.20.5
  */
-function buildQRCodeData(content: string, size: number, x: number, y: number, errorLevel: string): Buffer {
+function buildQRCodeData(
+  content: string,
+  size: number,
+  x: number,
+  y: number,
+  rotation: number,
+  errorLevel: "L" | "M" | "Q" | "H",
+  codeType = 0, // 0=QRcode, 1=DataMatrix, etc.
+  codeSize = 0, // 0=Auto, 1-8对应不同尺寸
+  inverse = false, // 是否反色
+  borderStyle = 0, // 0=无边框, 1=上下边框, 2=四周边框
+  borderSize = 0, // 边框尺寸 0-15
+): Buffer {
+  console.log("[v0] Building QR Code Data (按手册规范):", {
+    content,
+    size,
+    x,
+    y,
+    rotation,
+    errorLevel,
+    codeType,
+    codeSize,
+    inverse,
+    borderStyle,
+    borderSize,
+  })
+
   const contentBuf = Buffer.from(content, "utf8")
 
-  console.log("[v0] Building QR Code Data:")
-  console.log(`[v0]   Content: ${content}`)
-  console.log(`[v0]   Size: ${size}`)
-  console.log(`[v0]   Position: (${x}, ${y})`)
-  console.log(`[v0]   Error Level: ${errorLevel}`)
+  // 模块类型: 04 = 二维码模块
+  const moduleType = Buffer.from([0x04])
 
-  // 二维码模块结构 (根据协议文档 3.5.20.5)
-  const moduleType = Buffer.from([0x04]) // 模块类型: 04 = 二维码
-
-  // X/Y坐标 (2字节，大端序)
+  // X/Y坐标 (2字节，大端序，bit15=0表示正数)
   const xCoord = Buffer.alloc(2)
-  xCoord.writeUInt16BE(x & 0x7fff) // bit15=0表示正数
+  xCoord.writeUInt16BE(x & 0x7fff)
   const yCoord = Buffer.alloc(2)
   yCoord.writeUInt16BE(y & 0x7fff)
 
-  // 例如：size=3 应该发送 30 (代表3.0像素)，而不是 3 (代表0.3像素)
-  // 范围限制：3-150 (对应0.3-15.0像素)
-  const lineWidthValue = Math.max(30, Math.min(150, size * 10))
-  const lineWidth = Buffer.from([lineWidthValue])
+  // 线条宽度 (1字节，范围 03~0F，即3-15)
+  // UI的size 1-5 映射到 lineWidth 5-15
+  const lineWidth = Math.max(3, Math.min(15, size + 4))
+  console.log("[v0] Line Width:", lineWidth, "(0x" + lineWidth.toString(16) + ")")
 
-  // 条码类型(高4位) + 容错级别(低4位) (1字节)
-  // 条码类型: 0=QRcode
-  // 容错级别: 0=L, 1=M, 2=Q, 3=H
-  const errorLevelMap: Record<string, number> = { L: 0, M: 1, Q: 2, H: 3 }
-  const errorLevelValue = errorLevelMap[errorLevel] || 3 // 默认使用H级别
-  const codeTypeByte = (0 << 4) | errorLevelValue
-  const codeType = Buffer.from([codeTypeByte])
-
+  // 字节4: 条码类型(高4位) + 容错级别(低4位)
+  const errorLevelMap = { L: 0, M: 1, Q: 2, H: 3 }
+  const errorLevelValue = errorLevelMap[errorLevel] || 3
+  const byte4 = (codeType << 4) | errorLevelValue
   console.log(
-    `[v0]   Line Width: 0x${lineWidth[0].toString(16).padStart(2, "0")} (${lineWidthValue}/10 = ${lineWidthValue / 10} pixels)`,
-  )
-  console.log(
-    `[v0]   Code Type Byte: 0x${codeTypeByte.toString(16).padStart(2, "0")} (Type: 0, Error Level: ${errorLevelValue})`,
+    "[v0] Byte4 (条码类型+容错级别):",
+    "0x" + byte4.toString(16).padStart(2, "0"),
+    `(类型${codeType}, 容错${errorLevel}=${errorLevelValue})`,
   )
 
-  // 条码尺寸 (1字节，00=Auto)
-  const codeSize = Buffer.from([0x00])
+  // 字节5: 条码尺寸 (1字节)
+  // 0=Auto, 1-8对应不同尺寸等级
+  const byte5 = codeSize & 0xff
+  console.log("[v0] Byte5 (条码尺寸):", "0x" + byte5.toString(16).padStart(2, "0"))
 
-  // 条码方向(高4位) + 反色选择(低4位) (1字节)
-  // 方向: 0=0°
-  // 反色: 0=正常
-  const direction = Buffer.from([0x00])
+  // 字节6: 条码方向(高4位) + 反色选择(低4位)
+  // 方向: 0=0°, 1=90°, 2=180°, 3=270°
+  // 反色: 0=不反色, 1=反色
+  const rotationMap: { [key: number]: number } = { 0: 0, 90: 1, 180: 2, 270: 3 }
+  const rotationValue = rotationMap[rotation] || 0
+  const inverseValue = inverse ? 1 : 0
+  const byte6 = (rotationValue << 4) | inverseValue
+  console.log(
+    "[v0] Byte6 (方向+反色):",
+    "0x" + byte6.toString(16).padStart(2, "0"),
+    `(方向${rotation}°=${rotationValue}, 反色=${inverseValue})`,
+  )
 
-  // 边框样式(高4位) + 边框尺寸(低4位) (1字节)
-  // 样式: 0=无边框
-  // 尺寸: 0
-  const border = Buffer.from([0x00])
+  // 字节7: 边框样式(高4位) + 边框尺寸(低4位)
+  // 边框样式: 0=无边框, 1=上下边框, 2=四周边框
+  // 边框尺寸: 0-15
+  const byte7 = ((borderStyle & 0x0f) << 4) | (borderSize & 0x0f)
+  console.log(
+    "[v0] Byte7 (边框样式+尺寸):",
+    "0x" + byte7.toString(16).padStart(2, "0"),
+    `(样式${borderStyle}, 尺寸${borderSize})`,
+  )
 
-  // 插入子模块数 (1字节)
-  const subModuleCount = Buffer.from([0x01]) // 1个子模块
+  // 字节8: 插入子模块数 (1字节)
+  const subModuleCount = 0x01
+  console.log("[v0] Submodule Count:", subModuleCount)
 
-  // 子文本模块 (子模块类型01)
-  const subModuleType = Buffer.from([0x01]) // 类型01 = 文本
-  const textLength = Buffer.from([contentBuf.length]) // 文本字节数
+  // 子模块: 文本子模块 (类型01)
+  const subModuleType = 0x01 // 文本子模块
+  const textLength = Math.min(contentBuf.length, 255)
+  const textContent = contentBuf.slice(0, textLength)
 
-  console.log(`[v0]   Sub Module Type: 0x${subModuleType[0].toString(16).padStart(2, "0")}`)
-  console.log(`[v0]   Text Length: ${contentBuf.length}`)
-  console.log(`[v0]   Content Hex: ${contentBuf.toString("hex")}`)
+  console.log("[v0] Submodule: Type=0x01 (文本), Length=", textLength, "bytes")
+  console.log("[v0] Text Content:", textContent.toString())
 
-  const result = Buffer.concat([
-    moduleType,
-    xCoord,
-    yCoord,
-    lineWidth,
-    codeType,
-    codeSize,
-    direction,
-    border,
-    subModuleCount,
-    subModuleType,
-    textLength,
-    contentBuf,
+  const moduleData = Buffer.concat([
+    moduleType, // 1字节: 模块类型 0x04
+    xCoord, // 2字节: X坐标
+    yCoord, // 2字节: Y坐标
+    Buffer.from([lineWidth]), // 1字节: 线条宽度
+    Buffer.from([byte4]), // 1字节: 条码类型+容错级别
+    Buffer.from([byte5]), // 1字节: 条码尺寸
+    Buffer.from([byte6]), // 1字节: 方向+反色
+    Buffer.from([byte7]), // 1字节: 边框样式+尺寸
+    Buffer.from([subModuleCount]), // 1字节: 子模块数量
+    Buffer.from([subModuleType]), // 1字节: 子模块类型
+    Buffer.from([textLength]), // 1字节: 文本长度
+    textContent, // N字节: 文本内容
   ])
 
-  console.log(`[v0]   Final QR Module Data (hex): ${result.toString("hex")}`)
-  console.log(`[v0]   Final QR Module Data (length): ${result.length} bytes`)
+  console.log("[v0] Final QR Module Data (hex):", moduleData.toString("hex"))
+  console.log("[v0] Module Data Length:", moduleData.length, "bytes")
+  console.log("[v0] Module Structure:")
+  console.log("  [0]: 模块类型 =", moduleData[0].toString(16).padStart(2, "0"))
+  console.log("  [1-2]: X坐标 =", moduleData.readUInt16BE(1))
+  console.log("  [3-4]: Y坐标 =", moduleData.readUInt16BE(3))
+  console.log("  [5]: 线条宽度 =", moduleData[5])
+  console.log("  [6]: 条码类型+容错 =", moduleData[6].toString(16).padStart(2, "0"))
+  console.log("  [7]: 条码尺寸 =", moduleData[7].toString(16).padStart(2, "0"))
+  console.log("  [8]: 方向+反色 =", moduleData[8].toString(16).padStart(2, "0"))
+  console.log("  [9]: 边框样式+尺寸 =", moduleData[9].toString(16).padStart(2, "0"))
+  console.log("  [10]: 子模块数 =", moduleData[10])
+  console.log("  [11]: 子模块类型 =", moduleData[11].toString(16).padStart(2, "0"))
+  console.log("  [12]: 文本长度 =", moduleData[12])
 
-  return result
+  return moduleData
 }
 
 /**

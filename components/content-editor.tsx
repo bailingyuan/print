@@ -36,9 +36,15 @@ export function ContentEditor({
   const [qrUrl, setQrUrl] = useState("")
   const [qrQuantity, setQrQuantity] = useState("1")
   const [qrSize, setQrSize] = useState("3")
-  const [qrErrorLevel, setQrErrorLevel] = useState("L")
+  const [qrErrorLevel, setQrErrorLevel] = useState<"L" | "M" | "Q" | "H">("H")
   const [qrX, setQrX] = useState("0")
   const [qrY, setQrY] = useState("0")
+  const [qrCodeType, setQrCodeType] = useState("0") // 条码类型
+  const [qrCodeSize, setQrCodeSize] = useState("0") // 条码尺寸
+  const [qrRotation, setQrRotation] = useState("0") // 旋转角度
+  const [qrInverse, setQrInverse] = useState(false) // 是否反色
+  const [qrBorderStyle, setQrBorderStyle] = useState("0") // 边框样式
+  const [qrBorderSize, setQrBorderSize] = useState("0") // 边框尺寸
 
   // Text settings
   const [textContent, setTextContent] = useState("")
@@ -57,6 +63,12 @@ export function ContentEditor({
         errorLevel: qrErrorLevel,
         x: Number.parseInt(qrX),
         y: Number.parseInt(qrY),
+        codeType: Number.parseInt(qrCodeType),
+        codeSize: Number.parseInt(qrCodeSize),
+        rotation: Number.parseInt(qrRotation),
+        inverse: qrInverse,
+        borderStyle: Number.parseInt(qrBorderStyle),
+        borderSize: Number.parseInt(qrBorderSize),
       })
     } else {
       await onPrint({
@@ -113,17 +125,54 @@ export function ContentEditor({
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="qr-size">线条宽度 (像素)</Label>
+                <Label htmlFor="qr-size">线条宽度</Label>
                 <Select value={qrSize} onValueChange={setQrSize}>
                   <SelectTrigger id="qr-size">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="1">1px (最小)</SelectItem>
-                    <SelectItem value="2">2px (小)</SelectItem>
-                    <SelectItem value="3">3px (中)</SelectItem>
-                    <SelectItem value="4">4px (大)</SelectItem>
-                    <SelectItem value="5">5px (超大)</SelectItem>
+                    <SelectItem value="1">5 (最小)</SelectItem>
+                    <SelectItem value="2">6 (小)</SelectItem>
+                    <SelectItem value="3">7 (中)</SelectItem>
+                    <SelectItem value="4">8 (大)</SelectItem>
+                    <SelectItem value="5">9 (最大)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="qr-code-type">条码类型</Label>
+                <Select value={qrCodeType} onValueChange={setQrCodeType}>
+                  <SelectTrigger id="qr-code-type">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0">QRcode</SelectItem>
+                    <SelectItem value="1">Data Matrix</SelectItem>
+                    <SelectItem value="2">Micro QRcode</SelectItem>
+                    <SelectItem value="3">PDF417</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="qr-code-size">条码尺寸</Label>
+                <Select value={qrCodeSize} onValueChange={setQrCodeSize}>
+                  <SelectTrigger id="qr-code-size">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0">Auto</SelectItem>
+                    <SelectItem value="1">21x21</SelectItem>
+                    <SelectItem value="2">25x25</SelectItem>
+                    <SelectItem value="3">29x29</SelectItem>
+                    <SelectItem value="4">33x33</SelectItem>
+                    <SelectItem value="5">37x37</SelectItem>
+                    <SelectItem value="6">41x41</SelectItem>
+                    <SelectItem value="7">45x45</SelectItem>
+                    <SelectItem value="8">49x49</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -142,17 +191,73 @@ export function ContentEditor({
 
               <div className="space-y-2">
                 <Label htmlFor="qr-error">容错级别</Label>
-                <Select value={qrErrorLevel} onValueChange={setQrErrorLevel}>
+                <Select value={qrErrorLevel} onValueChange={(v) => setQrErrorLevel(v as "L" | "M" | "Q" | "H")}>
                   <SelectTrigger id="qr-error">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="L">L (低)</SelectItem>
-                    <SelectItem value="M">M (中)</SelectItem>
-                    <SelectItem value="Q">Q (高)</SelectItem>
-                    <SelectItem value="H">H (最高)</SelectItem>
+                    <SelectItem value="L">L (7%)</SelectItem>
+                    <SelectItem value="M">M (15%)</SelectItem>
+                    <SelectItem value="Q">Q (25%)</SelectItem>
+                    <SelectItem value="H">H (30%)</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="qr-rotation">旋转角度</Label>
+                <Select value={qrRotation} onValueChange={setQrRotation}>
+                  <SelectTrigger id="qr-rotation">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0">0°</SelectItem>
+                    <SelectItem value="90">90°</SelectItem>
+                    <SelectItem value="180">180°</SelectItem>
+                    <SelectItem value="270">270°</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="qr-border-style">边框样式</Label>
+                <Select value={qrBorderStyle} onValueChange={setQrBorderStyle}>
+                  <SelectTrigger id="qr-border-style">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0">无边框</SelectItem>
+                    <SelectItem value="1">上下边框</SelectItem>
+                    <SelectItem value="2">四周边框</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="qr-border-size">边框尺寸 (0-15)</Label>
+                <Input
+                  id="qr-border-size"
+                  type="number"
+                  min="0"
+                  max="15"
+                  value={qrBorderSize}
+                  onChange={(e) => setQrBorderSize(e.target.value)}
+                />
+              </div>
+
+              <div className="flex items-center space-x-2 pt-6">
+                <input
+                  type="checkbox"
+                  id="qr-inverse"
+                  checked={qrInverse}
+                  onChange={(e) => setQrInverse(e.target.checked)}
+                  className="h-4 w-4"
+                />
+                <Label htmlFor="qr-inverse">反色打印</Label>
               </div>
             </div>
           </TabsContent>
@@ -263,12 +368,15 @@ export function ContentEditor({
             <p>2. 点击"启动喷印"启动喷码机</p>
             <p>3. 点击"触发喷印"执行实际打印动作</p>
             <p className="mt-2 pt-2 border-t border-blue-200">
-              <span className="font-medium">参数说明:</span>
+              <span className="font-medium">二维码参数说明:</span>
             </p>
-            <p>• X/Y坐标: 设置内容在打印区域的位置 (像素)</p>
-            <p>• 线条宽度: 二维码单元格大小，1-5像素</p>
-            <p>• 容错级别: L(7%) &lt; M(15%) &lt; Q(25%) &lt; H(30%)</p>
-            <p>• 字体大小: 5-400范围，根据实际需求调整</p>
+            <p>• 线条宽度: 5-9，控制二维码单元格粗细</p>
+            <p>• 条码类型: QRcode/DataMatrix等不同二维码标准</p>
+            <p>• 条码尺寸: Auto自动或指定21x21到49x49等尺寸</p>
+            <p>
+              • 容错级别: L(7%) {"<"} M(15%) {"<"} Q(25%) {"<"} H(30%)
+            </p>
+            <p>• 边框样式: 无边框/上下边框/四周边框</p>
           </CardContent>
         </Card>
       </CardContent>

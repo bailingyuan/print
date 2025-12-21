@@ -18,9 +18,15 @@ export async function POST(request: Request) {
         content.url,
         content.quantity,
         content.size || 3,
+        content.errorLevel || "H",
         content.x || 0,
         content.y || 0,
-        content.errorLevel || "L",
+        content.codeType || 0,
+        content.codeSize || 0,
+        content.rotation || 0,
+        content.inverse || false,
+        content.borderStyle || 0,
+        content.borderSize || 0,
       )
 
       return NextResponse.json(result)
