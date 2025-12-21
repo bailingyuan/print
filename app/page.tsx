@@ -254,6 +254,29 @@ export default function PrinterControlPage() {
     await mutateStatus()
   }
 
+  const handleTriggerPrint = async () => {
+    setIsLoading(true)
+    try {
+      const response = await fetch("/api/printer/trigger", {
+        method: "POST",
+      })
+
+      const result = await response.json()
+
+      if (result.success) {
+        mutateLogs()
+        mutateStatus()
+      } else {
+        alert(`触发喷印失败: ${result.error || "未知错误"}`)
+      }
+    } catch (error) {
+      console.error("Trigger print error:", error)
+      alert(`触发喷印错误: ${error}`)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-4 md:p-8">
       <div className="mx-auto max-w-7xl space-y-6">
@@ -461,7 +484,7 @@ export default function PrinterControlPage() {
           </Card>
 
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardHeader>
               <CardTitle className="text-sm font-medium">CPU温度</CardTitle>
               <Thermometer className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
@@ -499,6 +522,7 @@ export default function PrinterControlPage() {
             connected={status?.connected || false}
             onStartPrinting={handleStartPrinting}
             onStopPrinting={handleStopPrinting}
+            onTriggerPrint={handleTriggerPrint}
             printing={status?.printing || false}
           />
 

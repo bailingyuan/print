@@ -627,6 +627,12 @@ export async function sendQRCodePrint(url: string, quantity: number, size = 3, x
 function buildQRCodeData(content: string, size: number, x: number, y: number, errorLevel: string): Buffer {
   const contentBuf = Buffer.from(content, "utf8")
 
+  console.log("[v0] Building QR Code Data:")
+  console.log(`[v0]   Content: ${content}`)
+  console.log(`[v0]   Size: ${size}`)
+  console.log(`[v0]   Position: (${x}, ${y})`)
+  console.log(`[v0]   Error Level: ${errorLevel}`)
+
   // 二维码模块结构 (根据协议文档 3.5.20.5)
   const moduleType = Buffer.from([0x04]) // 模块类型: 04 = 二维码
 
@@ -643,8 +649,14 @@ function buildQRCodeData(content: string, size: number, x: number, y: number, er
   // 条码类型: 0=QRcode
   // 容错级别: 0=L, 1=M, 2=Q, 3=H
   const errorLevelMap: Record<string, number> = { L: 0, M: 1, Q: 2, H: 3 }
-  const codeTypeByte = (0 << 4) | (errorLevelMap[errorLevel] || 0)
+  const errorLevelValue = errorLevelMap[errorLevel] || 3 // 默认使用H级别
+  const codeTypeByte = (0 << 4) | errorLevelValue
   const codeType = Buffer.from([codeTypeByte])
+
+  console.log(`[v0]   Line Width: 0x${lineWidth[0].toString(16).padStart(2, "0")}`)
+  console.log(
+    `[v0]   Code Type Byte: 0x${codeTypeByte.toString(16).padStart(2, "0")} (Type: 0, Error Level: ${errorLevelValue})`,
+  )
 
   // 条码尺寸 (1字节，00=Auto)
   const codeSize = Buffer.from([0x00])
@@ -666,7 +678,11 @@ function buildQRCodeData(content: string, size: number, x: number, y: number, er
   const subModuleType = Buffer.from([0x01]) // 类型01 = 文本
   const textLength = Buffer.from([contentBuf.length]) // 文本字节数
 
-  return Buffer.concat([
+  console.log(`[v0]   Sub Module Type: 0x${subModuleType[0].toString(16).padStart(2, "0")}`)
+  console.log(`[v0]   Text Length: ${contentBuf.length}`)
+  console.log(`[v0]   Content Hex: ${contentBuf.toString("hex")}`)
+
+  const result = Buffer.concat([
     moduleType,
     xCoord,
     yCoord,
@@ -680,6 +696,11 @@ function buildQRCodeData(content: string, size: number, x: number, y: number, er
     textLength,
     contentBuf,
   ])
+
+  console.log(`[v0]   Final QR Module Data (hex): ${result.toString("hex")}`)
+  console.log(`[v0]   Final QR Module Data (length): ${result.length} bytes`)
+
+  return result
 }
 
 /**
@@ -838,4 +859,11 @@ async function getCPUTemperature(): Promise<number> {
     console.error("[v0] CPU temperature exception:", error)
     return 0
   }
+}
+
+/**
+ * Trigger printing (simulate photoelectric signal)
+ */
+export async function triggerPrint() {
+  return sendCommand(0x13, "触发喷印")
 }
