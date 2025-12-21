@@ -1,13 +1,14 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
-import { Settings } from "lucide-react"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Settings, Bug } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -28,6 +29,8 @@ import {
   AlertCircle,
   CheckCircle2,
   Send,
+  Wifi,
+  WifiOff,
 } from "lucide-react"
 import { useSWR } from "@/lib/swr"
 
@@ -62,6 +65,7 @@ interface CommunicationLog {
 interface PrinterConfig {
   tcpHost: string
   tcpPort: number
+  machineNumber: number
   stepperDirPin: number
   stepperStepPin: number
   stepperEnablePin: number
@@ -74,21 +78,64 @@ export default function PrinterControlPage() {
   const [isLoading, setIsLoading] = useState(false)
 
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [config, setConfig] = useState<PrinterConfig>({
-    tcpHost: "192.168.1.100",
-    tcpPort: 9100,
-    stepperDirPin: 20,
-    stepperStepPin: 21,
-    stepperEnablePin: 16,
+  const [debugOpen, setDebugOpen] = useState(false)
+
+  const [config, setConfig] = useState<PrinterConfig>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("printerConfig")
+      if (saved) {
+        return JSON.parse(saved)
+      }
+    }
+    return {
+      tcpHost: "169.254.59.119",
+      tcpPort: 139,
+      machineNumber: 119,
+      stepperDirPin: 20,
+      stepperStepPin: 21,
+      stepperEnablePin: 16,
+    }
   })
 
-  const { data: status } = useSWR<PrinterStatus>("/api/printer/status", {
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("printerConfig", JSON.stringify(config))
+    }
+  }, [config])
+
+  const { data: status, mutate: mutateStatus } = useSWR<PrinterStatus>("/api/printer/status", {
     refreshInterval: 2000,
   })
 
   const { data: logs, mutate: mutateLogs } = useSWR<CommunicationLog[]>("/api/printer/logs", {
-    refreshInterval: 1000,
+    refreshInterval: 500,
+    revalidateOnFocus: false,
   })
+
+  const handleConnect = async () => {
+    try {
+      const response = await fetch("/api/printer/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(config),
+      })
+      const result = await response.json()
+      if (result.success) {
+        mutateStatus()
+      }
+    } catch (error) {
+      console.error("[v0] Connect error:", error)
+    }
+  }
+
+  const handleDisconnect = async () => {
+    try {
+      await fetch("/api/printer/disconnect", { method: "POST" })
+      mutateStatus()
+    } catch (error) {
+      console.error("[v0] Disconnect error:", error)
+    }
+  }
 
   const handlePrint = async () => {
     if (!qrUrl || !quantity) return
@@ -160,9 +207,26 @@ export default function PrinterControlPage() {
 
       if (response.ok) {
         setSettingsOpen(false)
+        await handleDisconnect()
+        await handleConnect()
       }
     } catch (error) {
       console.error("[v0] Save settings error:", error)
+    }
+  }
+
+  const executeDebugCommand = async (commandId: number, data?: any) => {
+    try {
+      const response = await fetch("/api/printer/debug", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ commandId, data }),
+      })
+      const result = await response.json()
+      mutateLogs()
+      return result
+    } catch (error) {
+      console.error("[v0] Debug command error:", error)
     }
   }
 
@@ -176,102 +240,131 @@ export default function PrinterControlPage() {
             <p className="text-muted-foreground">TIJ Printer Control System</p>
           </div>
 
-          {/* Settings Button */}
-          <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-            <DialogTrigger asChild>
-              <Button variant="outline" size="icon">
-                <Settings className="h-5 w-5" />
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle>系统设置</DialogTitle>
-                <DialogDescription>配置喷码机连接和步进电机参数</DialogDescription>
-              </DialogHeader>
+          <div className="flex gap-2">
+            {/* Debug Panel Button */}
+            <Dialog open={debugOpen} onOpenChange={setDebugOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="icon">
+                  <Bug className="h-5 w-5" />
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle>调试面板</DialogTitle>
+                  <DialogDescription>执行所有TIJ协议命令</DialogDescription>
+                </DialogHeader>
+                <DebugPanel onExecute={executeDebugCommand} />
+              </DialogContent>
+            </Dialog>
 
-              <div className="space-y-6 py-4">
-                {/* Connection Settings */}
-                <div className="space-y-4">
-                  <h3 className="text-lg font-semibold">喷码机TCP连接设置</h3>
+            {/* Settings Button */}
+            <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="icon">
+                  <Settings className="h-5 w-5" />
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle>系统设置</DialogTitle>
+                  <DialogDescription>配置喷码机连接和步进电机参数</DialogDescription>
+                </DialogHeader>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="tcp-host">IP地址</Label>
-                    <Input
-                      id="tcp-host"
-                      placeholder="192.168.1.100"
-                      value={config.tcpHost}
-                      onChange={(e) => setConfig({ ...config, tcpHost: e.target.value })}
-                    />
+                <div className="space-y-6 py-4">
+                  {/* Connection Settings */}
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-semibold">喷码机TCP连接设置</h3>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="tcp-host">IP地址</Label>
+                      <Input
+                        id="tcp-host"
+                        placeholder="169.254.59.119"
+                        value={config.tcpHost}
+                        onChange={(e) => setConfig({ ...config, tcpHost: e.target.value })}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="tcp-port">端口</Label>
+                      <Input
+                        id="tcp-port"
+                        type="number"
+                        value={config.tcpPort}
+                        onChange={(e) => setConfig({ ...config, tcpPort: Number.parseInt(e.target.value) })}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="machine-number">机号</Label>
+                      <Input
+                        id="machine-number"
+                        type="number"
+                        value={config.machineNumber}
+                        onChange={(e) => setConfig({ ...config, machineNumber: Number.parseInt(e.target.value) })}
+                      />
+                      <p className="text-xs text-muted-foreground">机号通常为IP地址最后一个字节的十进制值</p>
+                    </div>
                   </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="tcp-port">端口</Label>
-                    <Input
-                      id="tcp-port"
-                      type="number"
-                      value={config.tcpPort}
-                      onChange={(e) => setConfig({ ...config, tcpPort: Number.parseInt(e.target.value) })}
-                    />
+                  <Separator />
+
+                  {/* Stepper Motor Settings */}
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-semibold">步进电机GPIO设置</h3>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="dir-pin">方向控制引脚 (DIR)</Label>
+                      <Input
+                        id="dir-pin"
+                        type="number"
+                        value={config.stepperDirPin}
+                        onChange={(e) => setConfig({ ...config, stepperDirPin: Number.parseInt(e.target.value) })}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="step-pin">步进控制引脚 (STEP/PWM)</Label>
+                      <Input
+                        id="step-pin"
+                        type="number"
+                        value={config.stepperStepPin}
+                        onChange={(e) => setConfig({ ...config, stepperStepPin: Number.parseInt(e.target.value) })}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="enable-pin">使能引脚 (ENABLE)</Label>
+                      <Input
+                        id="enable-pin"
+                        type="number"
+                        value={config.stepperEnablePin}
+                        onChange={(e) => setConfig({ ...config, stepperEnablePin: Number.parseInt(e.target.value) })}
+                      />
+                    </div>
+
+                    <div className="rounded-lg bg-blue-50 border border-blue-200 p-4 text-sm">
+                      <p className="font-medium mb-2">引脚说明：</p>
+                      <ul className="list-disc list-inside space-y-1 text-muted-foreground">
+                        <li>GND: 接地线，连接到树莓派的GND引脚</li>
+                        <li>5V: 电源线，连接到树莓派的5V引脚</li>
+                        <li>DIR: 方向控制，使用GPIO引脚</li>
+                        <li>STEP: 步进信号，使用GPIO引脚（支持PWM）</li>
+                        <li>ENABLE: 使能控制，使用GPIO引脚</li>
+                      </ul>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2 justify-end">
+                    <Button variant="outline" onClick={() => setSettingsOpen(false)}>
+                      取消
+                    </Button>
+                    <Button onClick={handleSaveSettings}>保存设置</Button>
                   </div>
                 </div>
-
-                <Separator />
-
-                {/* Stepper Motor Settings */}
-                <div className="space-y-4">
-                  <h3 className="text-lg font-semibold">步进电机GPIO设置</h3>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="dir-pin">方向控制引脚 (DIR)</Label>
-                    <Input
-                      id="dir-pin"
-                      type="number"
-                      value={config.stepperDirPin}
-                      onChange={(e) => setConfig({ ...config, stepperDirPin: Number.parseInt(e.target.value) })}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="step-pin">步进控制引脚 (STEP/PWM)</Label>
-                    <Input
-                      id="step-pin"
-                      type="number"
-                      value={config.stepperStepPin}
-                      onChange={(e) => setConfig({ ...config, stepperStepPin: Number.parseInt(e.target.value) })}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="enable-pin">使能引脚 (ENABLE)</Label>
-                    <Input
-                      id="enable-pin"
-                      type="number"
-                      value={config.stepperEnablePin}
-                      onChange={(e) => setConfig({ ...config, stepperEnablePin: Number.parseInt(e.target.value) })}
-                    />
-                  </div>
-
-                  <div className="rounded-lg bg-blue-50 border border-blue-200 p-4 text-sm">
-                    <p className="font-medium mb-2">引脚说明：</p>
-                    <ul className="list-disc list-inside space-y-1 text-muted-foreground">
-                      <li>GND: 接地线，连接到树莓派的GND引脚</li>
-                      <li>5V: 电源线，连接到树莓派的5V引脚</li>
-                      <li>DIR: 方向控制，使用GPIO引脚</li>
-                      <li>STEP: 步进信号，使用GPIO引脚（支持PWM）</li>
-                      <li>ENABLE: 使能控制，使用GPIO引脚</li>
-                    </ul>
-                  </div>
-                </div>
-
-                <div className="flex gap-2 justify-end">
-                  <Button variant="outline" onClick={() => setSettingsOpen(false)}>
-                    取消
-                  </Button>
-                  <Button onClick={handleSaveSettings}>保存设置</Button>
-                </div>
-              </div>
-            </DialogContent>
-          </Dialog>
+              </DialogContent>
+            </Dialog>
+          </div>
         </div>
 
         {/* Status Cards */}
@@ -281,7 +374,7 @@ export default function PrinterControlPage() {
               <CardTitle className="text-sm font-medium">连接状态</CardTitle>
               <Activity className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-3">
               <div className="flex items-center gap-2">
                 {status?.connected ? (
                   <>
@@ -296,6 +389,28 @@ export default function PrinterControlPage() {
                     <Badge variant="destructive">未连接</Badge>
                   </>
                 )}
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="flex-1 bg-transparent"
+                  onClick={handleConnect}
+                  disabled={status?.connected}
+                >
+                  <Wifi className="mr-1 h-3 w-3" />
+                  连接
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="flex-1 bg-transparent"
+                  onClick={handleDisconnect}
+                  disabled={!status?.connected}
+                >
+                  <WifiOff className="mr-1 h-3 w-3" />
+                  断开
+                </Button>
               </div>
             </CardContent>
           </Card>
@@ -554,11 +669,216 @@ export default function PrinterControlPage() {
                   </div>
                 ))
               ) : (
-                <div className="text-center text-muted-foreground py-8">暂无通信记录</div>
+                <div className="text-center py-8 text-muted-foreground">暂无通信记录</div>
               )}
             </div>
           </CardContent>
         </Card>
+      </div>
+    </div>
+  )
+}
+
+function DebugPanel({ onExecute }: { onExecute: (commandId: number, data?: any) => Promise<any> }) {
+  const [selectedCommand, setSelectedCommand] = useState("0x01")
+  const [paramValues, setParamValues] = useState<Record<string, string>>({})
+
+  const commands = [
+    { id: "0x01", name: "发送打印", params: [] },
+    { id: "0x02", name: "加锁", params: [] },
+    { id: "0x03", name: "解锁", params: [] },
+    { id: "0x07", name: "获取打印小计", params: [] },
+    { id: "0x08", name: "获取产品小计", params: [] },
+    { id: "0x09", name: "获取打印总计", params: [] },
+    { id: "0x0A", name: "获取产品总计", params: [] },
+    { id: "0x0B", name: "复位小计", params: [] },
+    { id: "0x0C", name: "复位总计", params: [] },
+    { id: "0x0D", name: "复位序列号", params: [{ name: "编号", type: "number" }] },
+    {
+      id: "0x0E",
+      name: "设置序列号",
+      params: [
+        { name: "编号", type: "number" },
+        { name: "序列号", type: "number" },
+      ],
+    },
+    { id: "0x11", name: "启动喷印", params: [] },
+    { id: "0x12", name: "停止喷印", params: [] },
+    { id: "0x13", name: "触发喷印", params: [] },
+    { id: "0x14", name: "获取报警状态", params: [] },
+    { id: "0x15", name: "取消报警闪烁", params: [] },
+    { id: "0x18", name: "设置字体名称", params: [{ name: "字体名", type: "text" }] },
+    { id: "0x19", name: "设置字体大小", params: [{ name: "大小", type: "number" }] },
+    { id: "0x1A", name: "设置字体间距", params: [{ name: "间距", type: "number" }] },
+    { id: "0x20", name: "设置打印模式", params: [{ name: "模式", type: "select", options: ["固定速度", "编码器"] }] },
+    { id: "0x21", name: "清除1D缓存区", params: [] },
+    {
+      id: "0x22",
+      name: "设置闪喷",
+      params: [
+        { name: "喷头", type: "number" },
+        { name: "周期(秒)", type: "number" },
+        { name: "列数", type: "number" },
+      ],
+    },
+    {
+      id: "0x23",
+      name: "清洗喷头",
+      params: [
+        { name: "喷头", type: "select", options: ["所有", "1", "2", "3", "4", "5", "6"] },
+        { name: "列数", type: "number" },
+      ],
+    },
+    {
+      id: "0x26",
+      name: "获取墨盒余量",
+      params: [{ name: "喷头", type: "select", options: ["所有", "1", "2", "3", "4", "5", "6"] }],
+    },
+    { id: "0x27", name: "喷嘴选择", params: [{ name: "喷嘴", type: "select", options: ["单列", "双列"] }] },
+    { id: "0x28", name: "设置光眼有效电平", params: [{ name: "电平", type: "select", options: ["低电平", "高电平"] }] },
+    {
+      id: "0x29",
+      name: "设置左右翻转",
+      params: [
+        { name: "喷头", type: "number" },
+        { name: "翻转", type: "select", options: ["关", "开"] },
+      ],
+    },
+    {
+      id: "0x2A",
+      name: "设置上下颠倒",
+      params: [
+        { name: "喷头", type: "number" },
+        { name: "颠倒", type: "select", options: ["关", "开"] },
+      ],
+    },
+    {
+      id: "0x2B",
+      name: "设置扫描方向",
+      params: [
+        { name: "喷头", type: "number" },
+        { name: "方向", type: "select", options: ["从上到下", "从下到上"] },
+      ],
+    },
+    {
+      id: "0x2C",
+      name: "设置灰度",
+      params: [
+        { name: "喷头", type: "number" },
+        { name: "灰度值(1-6)", type: "number" },
+      ],
+    },
+    {
+      id: "0x2D",
+      name: "设置喷头电压",
+      params: [
+        { name: "喷头", type: "number" },
+        { name: "电压值(7.0-12.0)", type: "number" },
+      ],
+    },
+    {
+      id: "0x2E",
+      name: "设置打印脉宽",
+      params: [
+        { name: "喷头", type: "number" },
+        { name: "脉宽(μs)", type: "number" },
+      ],
+    },
+    {
+      id: "0x2F",
+      name: "设置双列间距",
+      params: [
+        { name: "喷头", type: "number" },
+        { name: "间距", type: "number" },
+      ],
+    },
+    { id: "0x30", name: "设置编码器分辨率", params: [{ name: "分辨率", type: "number" }] },
+    { id: "0x31", name: "设置编码器靠轮直径", params: [{ name: "直径(mm)", type: "number" }] },
+    { id: "0x32", name: "设置打印延迟", params: [{ name: "延迟(mm)", type: "number" }] },
+    { id: "0x33", name: "获取远端字段数据缓存数", params: [] },
+    { id: "0x34", name: "设置字段最大缓存数", params: [{ name: "数量", type: "number" }] },
+    { id: "0x35", name: "开启触发信号", params: [{ name: "开关", type: "select", options: ["关", "开"] }] },
+    { id: "0x36", name: "开启保留字段最后信息", params: [{ name: "开关", type: "select", options: ["关", "开"] }] },
+    { id: "0x37", name: "设置翻转延迟", params: [{ name: "延迟(ms)", type: "number" }] },
+    { id: "0x38", name: "设置喷头选择", params: [{ name: "喷头编号", type: "number" }] },
+    { id: "0x39", name: "设置喷头重叠", params: [{ name: "重叠列数", type: "number" }] },
+    { id: "0x40", name: "设置墨盒参数设置模式", params: [{ name: "模式", type: "select", options: ["自动", "手动"] }] },
+    { id: "0x41", name: "执行探测电压", params: [{ name: "喷头", type: "number" }] },
+    { id: "0x42", name: "获取当前信息墨点数", params: [] },
+  ]
+
+  const handleExecute = () => {
+    const commandId = Number.parseInt(selectedCommand)
+    onExecute(commandId, paramValues)
+  }
+
+  const selectedCommandInfo = commands.find((c) => c.id === selectedCommand)
+
+  return (
+    <div className="space-y-4 py-4">
+      <div className="space-y-2">
+        <Label>选择命令</Label>
+        <Select value={selectedCommand} onValueChange={setSelectedCommand}>
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent className="max-h-[300px]">
+            {commands.map((cmd) => (
+              <SelectItem key={cmd.id} value={cmd.id}>
+                {cmd.id} - {cmd.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      {selectedCommandInfo && selectedCommandInfo.params.length > 0 && (
+        <div className="space-y-3">
+          <Label className="text-sm font-medium">命令参数</Label>
+          {selectedCommandInfo.params.map((param, index) => (
+            <div key={index} className="space-y-1">
+              <Label className="text-xs text-muted-foreground">{param.name}</Label>
+              {param.type === "select" ? (
+                <Select
+                  value={paramValues[param.name] || ""}
+                  onValueChange={(value) => setParamValues({ ...paramValues, [param.name]: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={`选择${param.name}`} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {param.options?.map((opt) => (
+                      <SelectItem key={opt} value={opt}>
+                        {opt}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input
+                  type={param.type}
+                  placeholder={`输入${param.name}`}
+                  value={paramValues[param.name] || ""}
+                  onChange={(e) => setParamValues({ ...paramValues, [param.name]: e.target.value })}
+                />
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Button onClick={handleExecute} className="w-full">
+        <Send className="mr-2 h-4 w-4" />
+        执行命令
+      </Button>
+
+      <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm">
+        <p className="font-medium mb-1">注意事项：</p>
+        <ul className="list-disc list-inside space-y-1 text-muted-foreground text-xs">
+          <li>某些命令需要特定的喷码机状态才能执行</li>
+          <li>修改墨盒参数前请确认了解其影响</li>
+          <li>所有命令执行结果会在通信日志中显示</li>
+        </ul>
       </div>
     </div>
   )
