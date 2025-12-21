@@ -403,28 +403,34 @@ function addLog(log: any) {
 }
 
 /**
- * Get printer status
+ * Get printer status - NO AUTO CONNECTION
  */
 export async function getPrinterStatus() {
   try {
+    if (!printerState.connected || !tcpClient || tcpClient.destroyed) {
+      return {
+        connected: false,
+        cartridgeLevel: 0,
+        cpuTemperature: await getCPUTemperature(),
+        printing: false,
+        error: null,
+      }
+    }
+
     // Get cartridge level (command 0x26)
-    const cartridgeResponse = await sendCommand(0x26, "Get Cartridge Level")
-    const cartridgeLevel = cartridgeResponse.data.readUInt8(0)
+    try {
+      const cartridgeResponse = await sendCommand(0x26, "获取墨盒余量")
+      printerState.cartridgeLevel = cartridgeResponse.data.readUInt8(0)
+    } catch (error) {
+      console.error("[v0] Failed to get cartridge level:", error)
+    }
 
     // Get CPU temperature
     const cpuTemp = await getCPUTemperature()
 
-    // Get alarm status (command 0x14)
-    try {
-      const alarmResponse = await sendCommand(0x14, "Get Alarm Status")
-      printerState.connected = true
-    } catch (error) {
-      printerState.connected = false
-    }
-
     return {
       connected: printerState.connected,
-      cartridgeLevel: cartridgeLevel || 0,
+      cartridgeLevel: printerState.cartridgeLevel || 0,
       cpuTemperature: cpuTemp,
       printing: printerState.printing,
       error: null,
@@ -438,43 +444,6 @@ export async function getPrinterStatus() {
       printing: false,
       error: "Failed to get status",
     }
-  }
-}
-
-/**
- * Get CPU temperature from Raspberry Pi
- */
-async function getCPUTemperature(): Promise<number> {
-  try {
-    console.log("[v0] Attempting to read CPU temperature...")
-
-    return new Promise((resolve) => {
-      exec("cat /sys/class/thermal/thermal_zone0/temp", (error: any, stdout: string, stderr: string) => {
-        if (error) {
-          console.error("[v0] CPU temp read error:", error)
-          console.error("[v0] stderr:", stderr)
-          resolve(0)
-          return
-        }
-
-        const rawOutput = stdout.trim()
-        console.log("[v0] Raw CPU temp output:", rawOutput)
-
-        const tempMillidegrees = Number.parseInt(rawOutput)
-        if (isNaN(tempMillidegrees)) {
-          console.error("[v0] Failed to parse temperature:", rawOutput)
-          resolve(0)
-          return
-        }
-
-        const tempCelsius = tempMillidegrees / 1000
-        console.log("[v0] CPU Temperature:", tempCelsius, "°C")
-        resolve(Math.round(tempCelsius * 10) / 10)
-      })
-    })
-  } catch (error) {
-    console.error("[v0] CPU temperature exception:", error)
-    return 0
   }
 }
 
@@ -517,13 +486,14 @@ export async function connectPrinter() {
   try {
     const connection = initTCPConnection()
     if (connection) {
-      // Send handshake command
       await sendCommand(0x00, "握手通信")
+      printerState.connected = true
       return { success: true }
     }
     return { success: false, error: "Failed to initialize connection" }
   } catch (error) {
     console.error("[v0] Connect error:", error)
+    printerState.connected = false
     return { success: false, error: "Connection failed" }
   }
 }
@@ -531,10 +501,13 @@ export async function connectPrinter() {
 export async function disconnectPrinter() {
   try {
     if (tcpClient) {
+      tcpClient.removeAllListeners()
       tcpClient.destroy()
       tcpClient = null
     }
     printerState.connected = false
+    printerState.printing = false
+    console.log("[v0] Printer disconnected successfully")
     return { success: true }
   } catch (error) {
     console.error("[v0] Disconnect error:", error)
@@ -575,35 +548,43 @@ export async function executeDebugCommand(commandId: number, params: any = {}) {
  */
 export async function sendQRCodePrint(url: string, quantity: number) {
   try {
-    // Build QR code module data according to protocol 3.5.20.5
+    console.log("[v0] Starting QR code print:", url, "x", quantity)
+
     const qrData = buildQRCodeData(url)
 
     // Send information file (command 0x1C)
-    const infoName = "QRCode"
+    const infoName = "QR"
     const infoNameBuf = Buffer.from(infoName, "utf8")
 
-    const data = Buffer.concat([
-      Buffer.from([infoNameBuf.length]), // Info name length
-      infoNameBuf, // Info name
+    // Build complete data structure
+    const moduleData = Buffer.concat([
       Buffer.from([0x01]), // Module count (1 QR code module)
       qrData, // QR code module data
     ])
 
-    // Add data length prefix (3 bytes)
+    const data = Buffer.concat([
+      Buffer.from([infoNameBuf.length]), // Info name length
+      infoNameBuf, // Info name
+      moduleData,
+    ])
+
+    // Add data length prefix (3 bytes, big endian)
     const dataLength = Buffer.alloc(3)
     dataLength.writeUIntBE(data.length, 0, 3)
     const fullData = Buffer.concat([dataLength, data])
 
-    await sendCommand(0x1c, "Send QR Code Info", fullData)
+    console.log("[v0] QR code data:", fullData.toString("hex").toUpperCase())
 
-    // Send print command (command 0x01)
-    for (let i = 0; i < quantity; i++) {
-      await sendCommand(0x01, "Send Print")
-      // Trigger print (command 0x13)
-      await sendCommand(0x13, "Trigger Print")
-      // Small delay between prints
-      await new Promise((resolve) => setTimeout(resolve, 500))
-    }
+    // Send the information file
+    await sendCommand(0x1c, "发送信息文件", fullData)
+
+    // Wait a bit for the printer to process
+    await new Promise((resolve) => setTimeout(resolve, 500))
+
+    // Send print command (command 0x01) to update print content
+    await sendCommand(0x01, "发送打印")
+
+    console.log("[v0] QR code sent successfully, quantity:", quantity)
 
     return { success: true }
   } catch (error) {
@@ -613,26 +594,31 @@ export async function sendQRCodePrint(url: string, quantity: number) {
 }
 
 /**
- * Build QR code module data
+ * Build QR code module data according to protocol 3.5.20.5
  */
 function buildQRCodeData(content: string): Buffer {
   const contentBuf = Buffer.from(content, "utf8")
 
   // QR code module structure according to protocol
-  const moduleType = Buffer.from([0x04]) // QR code module type
-  const xCoord = Buffer.from([0x00, 0x00]) // X coordinate
-  const yCoord = Buffer.from([0x00, 0x00]) // Y coordinate
-  const lineWidth = Buffer.from([0x03]) // Line width: 3
-  const codeType = Buffer.from([0x00]) // QR code type (4 bits) + Error correction level (4 bits): QR + Level L
+  const moduleType = Buffer.from([0x04]) // Module type: 4 = QR code
+  const xCoord = Buffer.from([0x00, 0x00]) // X coordinate (2 bytes)
+  const yCoord = Buffer.from([0x00, 0x00]) // Y coordinate (2 bytes)
+  const lineWidth = Buffer.from([0x03]) // Line width: 3 pixels
+
+  // Code type byte:
+  // High 4 bits: QR code type (0=QR, 1=DataMatrix, 2=MicroQR, 3=PDF417)
+  // Low 4 bits: Error correction level (0=L, 1=M, 2=Q, 3=H)
+  const codeType = Buffer.from([0x00]) // QR code + Level L
+
   const codeSize = Buffer.from([0x00]) // Auto size
-  const direction = Buffer.from([0x00]) // 0° + no inversion
+  const direction = Buffer.from([0x00]) // 0° rotation + no inversion
   const border = Buffer.from([0x00]) // No border
 
-  // Sub-modules count (1 for simple text)
+  // Sub-modules count (1 for text content)
   const subModuleCount = Buffer.from([0x01])
 
-  // Sub-module: Text
-  const subModuleType = Buffer.from([0x01]) // Text type
+  // Sub-module: Text content
+  const subModuleType = Buffer.from([0x01]) // Type 1 = Text
   const textLength = Buffer.from([contentBuf.length])
 
   return Buffer.concat([
@@ -656,4 +642,41 @@ function buildQRCodeData(content: string): Buffer {
  */
 export function getCommunicationLogs() {
   return communicationLogs
+}
+
+/**
+ * Get CPU temperature from Raspberry Pi
+ */
+async function getCPUTemperature(): Promise<number> {
+  try {
+    console.log("[v0] Attempting to read CPU temperature...")
+
+    return new Promise((resolve) => {
+      exec("cat /sys/class/thermal/thermal_zone0/temp", (error: any, stdout: string, stderr: string) => {
+        if (error) {
+          console.error("[v0] CPU temp read error:", error)
+          console.error("[v0] stderr:", stderr)
+          resolve(0)
+          return
+        }
+
+        const rawOutput = stdout.trim()
+        console.log("[v0] Raw CPU temp output:", rawOutput)
+
+        const tempMillidegrees = Number.parseInt(rawOutput)
+        if (isNaN(tempMillidegrees)) {
+          console.error("[v0] Failed to parse temperature:", rawOutput)
+          resolve(0)
+          return
+        }
+
+        const tempCelsius = tempMillidegrees / 1000
+        console.log("[v0] CPU Temperature:", tempCelsius, "°C")
+        resolve(Math.round(tempCelsius * 10) / 10)
+      })
+    })
+  } catch (error) {
+    console.error("[v0] CPU temperature exception:", error)
+    return 0
+  }
 }

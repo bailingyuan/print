@@ -7,8 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Settings, Bug } from "lucide-react"
+import { Settings, Bug, RefreshCw } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -24,15 +23,14 @@ import {
   Printer,
   ArrowLeft,
   ArrowRight,
-  Play,
-  Square,
   AlertCircle,
   CheckCircle2,
-  Send,
   Wifi,
   WifiOff,
 } from "lucide-react"
 import { useSWR } from "@/lib/swr"
+import { DebugPanel } from "@/components/debug-panel"
+import { ContentEditor } from "@/components/content-editor"
 
 interface PrinterStatus {
   connected: boolean
@@ -104,11 +102,12 @@ export default function PrinterControlPage() {
   }, [config])
 
   const { data: status, mutate: mutateStatus } = useSWR<PrinterStatus>("/api/printer/status", {
-    refreshInterval: 2000,
+    refreshInterval: 20000, // Poll every 20 seconds
+    revalidateOnFocus: false,
   })
 
   const { data: logs, mutate: mutateLogs } = useSWR<CommunicationLog[]>("/api/printer/logs", {
-    refreshInterval: 500,
+    refreshInterval: 1000,
     revalidateOnFocus: false,
   })
 
@@ -131,7 +130,8 @@ export default function PrinterControlPage() {
   const handleDisconnect = async () => {
     try {
       await fetch("/api/printer/disconnect", { method: "POST" })
-      mutateStatus()
+      await mutateStatus()
+      console.log("[v0] Disconnected successfully")
     } catch (error) {
       console.error("[v0] Disconnect error:", error)
     }
@@ -230,6 +230,10 @@ export default function PrinterControlPage() {
     }
   }
 
+  const handleRefreshStatus = async () => {
+    await mutateStatus()
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-4 md:p-8">
       <div className="mx-auto max-w-7xl space-y-6">
@@ -248,12 +252,12 @@ export default function PrinterControlPage() {
                   <Bug className="h-5 w-5" />
                 </Button>
               </DialogTrigger>
-              <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+              <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
-                  <DialogTitle>调试面板</DialogTitle>
-                  <DialogDescription>执行所有TIJ协议命令</DialogDescription>
+                  <DialogTitle>调试面板 - TIJ协议命令</DialogTitle>
+                  <DialogDescription>执行所有TIJ通讯协议命令并查看详细响应</DialogDescription>
                 </DialogHeader>
-                <DebugPanel onExecute={executeDebugCommand} />
+                <DebugPanel onExecute={executeDebugCommand} onUpdate={mutateLogs} />
               </DialogContent>
             </Dialog>
 
@@ -421,7 +425,12 @@ export default function PrinterControlPage() {
               <Droplets className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{status?.cartridgeLevel || 0}%</div>
+              <div className="flex items-center justify-between">
+                <div className="text-2xl font-bold">{status?.cartridgeLevel || 0}%</div>
+                <Button size="icon" variant="ghost" onClick={handleRefreshStatus} className="h-8 w-8">
+                  <RefreshCw className="h-4 w-4" />
+                </Button>
+              </div>
               <div className="mt-2 h-2 w-full rounded-full bg-muted">
                 <div
                   className="h-full rounded-full bg-blue-500 transition-all"
@@ -464,68 +473,14 @@ export default function PrinterControlPage() {
         </div>
 
         <div className="grid gap-6 md:grid-cols-2">
-          {/* Print Control */}
-          <Card>
-            <CardHeader>
-              <CardTitle>二维码打印</CardTitle>
-              <CardDescription>输入URL和数量生成二维码并打印</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="qr-url">URL链接</Label>
-                <Input
-                  id="qr-url"
-                  placeholder="https://example.com"
-                  value={qrUrl}
-                  onChange={(e) => setQrUrl(e.target.value)}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="quantity">打印数量</Label>
-                <Input
-                  id="quantity"
-                  type="number"
-                  min="1"
-                  placeholder="1"
-                  value={quantity}
-                  onChange={(e) => setQuantity(e.target.value)}
-                />
-              </div>
-
-              <Button
-                className="w-full"
-                onClick={handlePrint}
-                disabled={!qrUrl || !quantity || isLoading || !status?.connected}
-              >
-                <Send className="mr-2 h-4 w-4" />
-                {isLoading ? "发送中..." : "发送打印"}
-              </Button>
-
-              <Separator />
-
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  className="flex-1 bg-transparent"
-                  onClick={handleStartPrinting}
-                  disabled={status?.printing || !status?.connected}
-                >
-                  <Play className="mr-2 h-4 w-4" />
-                  启动喷印
-                </Button>
-                <Button
-                  variant="outline"
-                  className="flex-1 bg-transparent"
-                  onClick={handleStopPrinting}
-                  disabled={!status?.printing || !status?.connected}
-                >
-                  <Square className="mr-2 h-4 w-4" />
-                  停止喷印
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+          <ContentEditor
+            onPrint={handlePrint}
+            isLoading={isLoading}
+            connected={status?.connected || false}
+            onStartPrinting={handleStartPrinting}
+            onStopPrinting={handleStopPrinting}
+            printing={status?.printing || false}
+          />
 
           {/* Stepper Motor Control */}
           <Card>
@@ -674,211 +629,6 @@ export default function PrinterControlPage() {
             </div>
           </CardContent>
         </Card>
-      </div>
-    </div>
-  )
-}
-
-function DebugPanel({ onExecute }: { onExecute: (commandId: number, data?: any) => Promise<any> }) {
-  const [selectedCommand, setSelectedCommand] = useState("0x01")
-  const [paramValues, setParamValues] = useState<Record<string, string>>({})
-
-  const commands = [
-    { id: "0x01", name: "发送打印", params: [] },
-    { id: "0x02", name: "加锁", params: [] },
-    { id: "0x03", name: "解锁", params: [] },
-    { id: "0x07", name: "获取打印小计", params: [] },
-    { id: "0x08", name: "获取产品小计", params: [] },
-    { id: "0x09", name: "获取打印总计", params: [] },
-    { id: "0x0A", name: "获取产品总计", params: [] },
-    { id: "0x0B", name: "复位小计", params: [] },
-    { id: "0x0C", name: "复位总计", params: [] },
-    { id: "0x0D", name: "复位序列号", params: [{ name: "编号", type: "number" }] },
-    {
-      id: "0x0E",
-      name: "设置序列号",
-      params: [
-        { name: "编号", type: "number" },
-        { name: "序列号", type: "number" },
-      ],
-    },
-    { id: "0x11", name: "启动喷印", params: [] },
-    { id: "0x12", name: "停止喷印", params: [] },
-    { id: "0x13", name: "触发喷印", params: [] },
-    { id: "0x14", name: "获取报警状态", params: [] },
-    { id: "0x15", name: "取消报警闪烁", params: [] },
-    { id: "0x18", name: "设置字体名称", params: [{ name: "字体名", type: "text" }] },
-    { id: "0x19", name: "设置字体大小", params: [{ name: "大小", type: "number" }] },
-    { id: "0x1A", name: "设置字体间距", params: [{ name: "间距", type: "number" }] },
-    { id: "0x20", name: "设置打印模式", params: [{ name: "模式", type: "select", options: ["固定速度", "编码器"] }] },
-    { id: "0x21", name: "清除1D缓存区", params: [] },
-    {
-      id: "0x22",
-      name: "设置闪喷",
-      params: [
-        { name: "喷头", type: "number" },
-        { name: "周期(秒)", type: "number" },
-        { name: "列数", type: "number" },
-      ],
-    },
-    {
-      id: "0x23",
-      name: "清洗喷头",
-      params: [
-        { name: "喷头", type: "select", options: ["所有", "1", "2", "3", "4", "5", "6"] },
-        { name: "列数", type: "number" },
-      ],
-    },
-    {
-      id: "0x26",
-      name: "获取墨盒余量",
-      params: [{ name: "喷头", type: "select", options: ["所有", "1", "2", "3", "4", "5", "6"] }],
-    },
-    { id: "0x27", name: "喷嘴选择", params: [{ name: "喷嘴", type: "select", options: ["单列", "双列"] }] },
-    { id: "0x28", name: "设置光眼有效电平", params: [{ name: "电平", type: "select", options: ["低电平", "高电平"] }] },
-    {
-      id: "0x29",
-      name: "设置左右翻转",
-      params: [
-        { name: "喷头", type: "number" },
-        { name: "翻转", type: "select", options: ["关", "开"] },
-      ],
-    },
-    {
-      id: "0x2A",
-      name: "设置上下颠倒",
-      params: [
-        { name: "喷头", type: "number" },
-        { name: "颠倒", type: "select", options: ["关", "开"] },
-      ],
-    },
-    {
-      id: "0x2B",
-      name: "设置扫描方向",
-      params: [
-        { name: "喷头", type: "number" },
-        { name: "方向", type: "select", options: ["从上到下", "从下到上"] },
-      ],
-    },
-    {
-      id: "0x2C",
-      name: "设置灰度",
-      params: [
-        { name: "喷头", type: "number" },
-        { name: "灰度值(1-6)", type: "number" },
-      ],
-    },
-    {
-      id: "0x2D",
-      name: "设置喷头电压",
-      params: [
-        { name: "喷头", type: "number" },
-        { name: "电压值(7.0-12.0)", type: "number" },
-      ],
-    },
-    {
-      id: "0x2E",
-      name: "设置打印脉宽",
-      params: [
-        { name: "喷头", type: "number" },
-        { name: "脉宽(μs)", type: "number" },
-      ],
-    },
-    {
-      id: "0x2F",
-      name: "设置双列间距",
-      params: [
-        { name: "喷头", type: "number" },
-        { name: "间距", type: "number" },
-      ],
-    },
-    { id: "0x30", name: "设置编码器分辨率", params: [{ name: "分辨率", type: "number" }] },
-    { id: "0x31", name: "设置编码器靠轮直径", params: [{ name: "直径(mm)", type: "number" }] },
-    { id: "0x32", name: "设置打印延迟", params: [{ name: "延迟(mm)", type: "number" }] },
-    { id: "0x33", name: "获取远端字段数据缓存数", params: [] },
-    { id: "0x34", name: "设置字段最大缓存数", params: [{ name: "数量", type: "number" }] },
-    { id: "0x35", name: "开启触发信号", params: [{ name: "开关", type: "select", options: ["关", "开"] }] },
-    { id: "0x36", name: "开启保留字段最后信息", params: [{ name: "开关", type: "select", options: ["关", "开"] }] },
-    { id: "0x37", name: "设置翻转延迟", params: [{ name: "延迟(ms)", type: "number" }] },
-    { id: "0x38", name: "设置喷头选择", params: [{ name: "喷头编号", type: "number" }] },
-    { id: "0x39", name: "设置喷头重叠", params: [{ name: "重叠列数", type: "number" }] },
-    { id: "0x40", name: "设置墨盒参数设置模式", params: [{ name: "模式", type: "select", options: ["自动", "手动"] }] },
-    { id: "0x41", name: "执行探测电压", params: [{ name: "喷头", type: "number" }] },
-    { id: "0x42", name: "获取当前信息墨点数", params: [] },
-  ]
-
-  const handleExecute = () => {
-    const commandId = Number.parseInt(selectedCommand)
-    onExecute(commandId, paramValues)
-  }
-
-  const selectedCommandInfo = commands.find((c) => c.id === selectedCommand)
-
-  return (
-    <div className="space-y-4 py-4">
-      <div className="space-y-2">
-        <Label>选择命令</Label>
-        <Select value={selectedCommand} onValueChange={setSelectedCommand}>
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent className="max-h-[300px]">
-            {commands.map((cmd) => (
-              <SelectItem key={cmd.id} value={cmd.id}>
-                {cmd.id} - {cmd.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      {selectedCommandInfo && selectedCommandInfo.params.length > 0 && (
-        <div className="space-y-3">
-          <Label className="text-sm font-medium">命令参数</Label>
-          {selectedCommandInfo.params.map((param, index) => (
-            <div key={index} className="space-y-1">
-              <Label className="text-xs text-muted-foreground">{param.name}</Label>
-              {param.type === "select" ? (
-                <Select
-                  value={paramValues[param.name] || ""}
-                  onValueChange={(value) => setParamValues({ ...paramValues, [param.name]: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder={`选择${param.name}`} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {param.options?.map((opt) => (
-                      <SelectItem key={opt} value={opt}>
-                        {opt}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <Input
-                  type={param.type}
-                  placeholder={`输入${param.name}`}
-                  value={paramValues[param.name] || ""}
-                  onChange={(e) => setParamValues({ ...paramValues, [param.name]: e.target.value })}
-                />
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
-      <Button onClick={handleExecute} className="w-full">
-        <Send className="mr-2 h-4 w-4" />
-        执行命令
-      </Button>
-
-      <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm">
-        <p className="font-medium mb-1">注意事项：</p>
-        <ul className="list-disc list-inside space-y-1 text-muted-foreground text-xs">
-          <li>某些命令需要特定的喷码机状态才能执行</li>
-          <li>修改墨盒参数前请确认了解其影响</li>
-          <li>所有命令执行结果会在通信日志中显示</li>
-        </ul>
       </div>
     </div>
   )
