@@ -690,16 +690,19 @@ async function buildQRCodeAsPattern(
 ): Promise<Buffer> {
   console.log("[v0] Building QR Code as Pattern Module")
 
+  const baseSize = 100 // 基础尺寸
+  const actualSize = baseSize * size // size=1-5，生成100-500像素的二维码
+
   // 生成二维码位图
   const qrOptions = {
     errorCorrectionLevel: errorLevel,
     type: "png" as const,
     quality: 1,
     margin: 1,
-    width: 200, // 基础尺寸，会根据size参数调整
+    width: actualSize,
     color: {
-      dark: inverse ? "#FFFFFF" : "#000000",
-      light: inverse ? "#000000" : "#FFFFFF",
+      dark: "#000000",
+      light: "#FFFFFF",
     },
   }
 
@@ -712,137 +715,83 @@ async function buildQRCodeAsPattern(
   console.log("[v0] QR code bitmap:", { width, height, bitmapSize: bitmap.length })
 
   // 构建图案模块 (0x07)
-  // 字节0: 模块类型 = 0x07 (图案模块)
   const moduleType = 0x07
 
-  // 字节1-2: X坐标 (2字节，大端序)
+  // X坐标 (2字节，大端序)
   const xCoord = Buffer.alloc(2)
   xCoord.writeUInt16BE(x & 0x7fff)
 
-  // 字节3-4: Y坐标 (2字节，大端序)
+  // Y坐标 (2字节，大端序)
   const yCoord = Buffer.alloc(2)
   yCoord.writeUInt16BE(y & 0x7fff)
 
-  // 字节5-6: 图案方向 (2字节)
-  // 0=0°, 359=359°
+  // 图案方向 (2字节)
   const rotationMap: Record<number, number> = { 0: 0, 90: 90, 180: 180, 270: 270 }
   const rotationValue = rotationMap[rotation] ?? 0
   const rotationBuf = Buffer.alloc(2)
   rotationBuf.writeUInt16BE(rotationValue)
 
-  // 字节7: 图案尺寸/10 (1字节)
-  // 例如: 100表示图案尺寸为100%
-  const patternScale = 100 // 100% 原始大小
+  // 缩放比例/10 (1字节) - 设置为10表示100%
+  const patternScale = 10 // 100%/10 = 10
 
-  // 字节8: 图案反色(高4位) + 操作类型(低4位)
-  // 反色: 0=不反色, 1=反色
-  // 操作类型: 0=打开模块时绘制, 1=关闭模块时清除
+  // 反色: 0=正常显示, 1=黑白反色
+  // 操作类型: 1=发送图片数据到喷码机并保存（而不是0）
   const inverseValue = inverse ? 1 : 0
-  const operationType = 0 // 打开模块时绘制
+  const operationType = 1 // 1 = 发送图片数据并保存（协议3.5.20.7）
   const patternByte = (inverseValue << 4) | operationType
 
-  // 文件名 (使用固定名称 "qr.bmp")
-  const fileName = "qr.bmp"
+  console.log("[v0] Pattern byte:", {
+    hex: patternByte.toString(16).padStart(2, "0"),
+    inverse: inverseValue,
+    operationType,
+    binary: patternByte.toString(2).padStart(8, "0"),
+  })
+
+  // 文件名 (使用时间戳生成唯一名称)
+  const timestamp = Date.now()
+  const fileName = `qr_${timestamp}`
   const fileNameBuf = Buffer.from(fileName, "utf8")
   const fileNameLength = fileNameBuf.length
 
-  // 字节N: 图片宽度 (2字节，大端序)
+  // 图片宽度 (2字节，大端序) - 原始宽度
   const widthBuf = Buffer.alloc(2)
   widthBuf.writeUInt16BE(width)
 
-  // 字节N+2: 图片高度 (2字节，大端序)
+  // 图片高度 (2字节，大端序) - 原始高度
   const heightBuf = Buffer.alloc(2)
   heightBuf.writeUInt16BE(height)
 
-  // 组装图案模块数据
+  // 组装图案模块数据（严格按照协议3.5.20.7）
   const patternModule = Buffer.concat([
-    Buffer.from([moduleType]), // 模块类型 1字节
+    Buffer.from([moduleType]), // 07 = 图案模块
     xCoord, // X坐标 2字节
     yCoord, // Y坐标 2字节
     rotationBuf, // 方向 2字节
-    Buffer.from([patternScale]), // 尺寸/10 1字节
-    Buffer.from([patternByte]), // 反色+操作 1字节
+    Buffer.from([patternScale]), // 缩放/10 1字节
+    Buffer.from([patternByte]), // 反色+操作类型 1字节
     Buffer.from([fileNameLength]), // 文件名长度 1字节
-    fileNameBuf, // 文件名
+    fileNameBuf, // 文件名 N字节
     widthBuf, // 宽度 2字节
     heightBuf, // 高度 2字节
     bitmap, // 位图数据 N字节
   ])
 
-  console.log("[v0] 图案模块数据长度:", patternModule.length, "字节")
-  console.log("[v0] 图案模块参数:", {
-    moduleType: "0x07",
-    x,
-    y,
-    rotation: rotationValue,
-    scale: patternScale,
-    inverse: inverseValue,
-    fileName,
-    width,
-    height,
-    bitmapSize: bitmap.length,
-  })
+  console.log("[v0] === 图案模块详细参数 ===")
+  console.log("[v0] 模块类型: 0x07 (图案模块)")
+  console.log("[v0] X坐标:", x)
+  console.log("[v0] Y坐标:", y)
+  console.log("[v0] 旋转:", rotationValue, "°")
+  console.log("[v0] 缩放比例:", patternScale * 10, "%")
+  console.log("[v0] 反色:", inverse ? "是" : "否")
+  console.log("[v0] 操作类型: 1 (发送图片)")
+  console.log("[v0] 文件名:", fileName)
+  console.log("[v0] 图片尺寸:", width, "x", height)
+  console.log("[v0] 位图数据:", bitmap.length, "字节")
+  console.log("[v0] 图案模块总长度:", patternModule.length, "字节")
+  console.log("[v0] 前32字节:", patternModule.slice(0, 32).toString("hex").toUpperCase())
+  console.log("[v0] ============================")
 
   return patternModule
-}
-
-/**
- * Parse PNG buffer to bitmap data
- * 将PNG图片解析为单色位图数据（用于喷码机）
- */
-async function parsePNGToBitmap(pngBuffer: Buffer): Promise<{
-  width: number
-  height: number
-  bitmap: Buffer
-}> {
-  console.log("[v0] Parsing PNG to bitmap...")
-
-  try {
-    const image = sharp(pngBuffer)
-    const metadata = await image.metadata()
-
-    if (!metadata.width || !metadata.height) {
-      throw new Error("Invalid image metadata")
-    }
-
-    const width = metadata.width
-    const height = metadata.height
-
-    console.log("[v0] Image size:", width, "x", height)
-
-    // 转换为灰度图并获取原始像素数据
-    const { data } = await image.greyscale().raw().toBuffer({ resolveWithObject: true })
-
-    console.log("[v0] Raw data size:", data.length, "bytes")
-
-    // 转换为单色位图
-    // 每个像素用1位表示（黑=1，白=0）
-    const bytesPerRow = Math.ceil(width / 8)
-    const bitmapSize = bytesPerRow * height
-    const bitmap = Buffer.alloc(bitmapSize, 0)
-
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const pixelIndex = y * width + x
-        const pixelValue = data[pixelIndex]
-
-        // 如果像素值<128，认为是黑色，设置对应位为1
-        if (pixelValue < 128) {
-          const byteIndex = y * bytesPerRow + Math.floor(x / 8)
-          const bitIndex = 7 - (x % 8)
-          bitmap[byteIndex] |= 1 << bitIndex
-        }
-      }
-    }
-
-    console.log("[v0] Bitmap conversion complete:", bitmap.length, "bytes")
-    console.log("[v0] First 32 bytes of bitmap:", bitmap.slice(0, 32).toString("hex"))
-
-    return { width, height, bitmap }
-  } catch (error) {
-    console.error("[v0] Error parsing PNG to bitmap:", error)
-    throw error
-  }
 }
 
 /**
@@ -1015,4 +964,63 @@ export async function triggerPrint() {
  */
 function getStatusText(statusCode: number): string {
   return STATUS_CODE_MAP[statusCode] || `未知状态码: 0x${statusCode.toString(16).toUpperCase()}`
+}
+
+/**
+ * Parse PNG buffer to bitmap data
+ * 将PNG图片解析为单色位图数据（用于喷码机）
+ */
+async function parsePNGToBitmap(pngBuffer: Buffer): Promise<{
+  width: number
+  height: number
+  bitmap: Buffer
+}> {
+  console.log("[v0] Parsing PNG to bitmap...")
+
+  try {
+    const image = sharp(pngBuffer)
+    const metadata = await image.metadata()
+
+    if (!metadata.width || !metadata.height) {
+      throw new Error("Invalid image metadata")
+    }
+
+    const width = metadata.width
+    const height = metadata.height
+
+    console.log("[v0] Image size:", width, "x", height)
+
+    // 转换为灰度图并获取原始像素数据
+    const { data } = await image.greyscale().raw().toBuffer({ resolveWithObject: true })
+
+    console.log("[v0] Raw data size:", data.length, "bytes")
+
+    // 转换为单色位图
+    // 每个像素用1位表示（黑=1，白=0）
+    const bytesPerRow = Math.ceil(width / 8)
+    const bitmapSize = bytesPerRow * height
+    const bitmap = Buffer.alloc(bitmapSize, 0)
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const pixelIndex = y * width + x
+        const pixelValue = data[pixelIndex]
+
+        // 如果像素值<128，认为是黑色，设置对应位为1
+        if (pixelValue < 128) {
+          const byteIndex = y * bytesPerRow + Math.floor(x / 8)
+          const bitIndex = 7 - (x % 8)
+          bitmap[byteIndex] |= 1 << bitIndex
+        }
+      }
+    }
+
+    console.log("[v0] Bitmap conversion complete:", bitmap.length, "bytes")
+    console.log("[v0] First 32 bytes of bitmap:", bitmap.slice(0, 32).toString("hex"))
+
+    return { width, height, bitmap }
+  } catch (error) {
+    console.error("[v0] Error parsing PNG to bitmap:", error)
+    throw error
+  }
 }

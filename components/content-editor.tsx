@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { Send, Play, Square, Type, QrCode } from "lucide-react"
+import QRCode from "qrcode"
 
 interface ContentEditorProps {
   onPrint: (content: any) => Promise<void>
@@ -39,6 +40,7 @@ export function ContentEditor({
   const [qrX, setQrX] = useState("0")
   const [qrY, setQrY] = useState("0")
   const [qrInverse, setQrInverse] = useState(false) // 是否反色
+  const [qrPreview, setQrPreview] = useState<string>("")
 
   // Text settings
   const [textContent, setTextContent] = useState("")
@@ -70,6 +72,20 @@ export function ContentEditor({
     }
   }
 
+  async function generateQRPreview(url: string) {
+    try {
+      const dataUrl = await QRCode.toDataURL(url, {
+        errorCorrectionLevel: "H",
+        margin: 1,
+        width: 200,
+      })
+      setQrPreview(dataUrl)
+    } catch (error) {
+      console.error("Failed to generate QR preview:", error)
+      setQrPreview("")
+    }
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -96,9 +112,25 @@ export function ContentEditor({
                 id="qr-url"
                 placeholder="https://example.com"
                 value={qrUrl}
-                onChange={(e) => setQrUrl(e.target.value)}
+                onChange={(e) => {
+                  setQrUrl(e.target.value)
+                  if (e.target.value) {
+                    generateQRPreview(e.target.value)
+                  } else {
+                    setQrPreview("")
+                  }
+                }}
               />
             </div>
+
+            {qrPreview && (
+              <div className="space-y-2">
+                <Label>二维码预览</Label>
+                <div className="flex justify-center p-4 bg-gray-50 border rounded-lg">
+                  <img src={qrPreview || "/placeholder.svg"} alt="QR Code Preview" className="max-w-[200px]" />
+                </div>
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
@@ -235,16 +267,19 @@ export function ContentEditor({
         <Card className="bg-blue-50 border-blue-200">
           <CardContent className="text-xs space-y-1 pt-3 text-muted-foreground">
             <p className="font-medium text-blue-900 mb-2">打印流程:</p>
-            <p>1. 设置内容并点击"发送打印"上传到喷码机</p>
-            <p>2. 点击"启动喷印"启动喷码机</p>
-            <p>3. 喷码机将自动检测并打印二维码/文本</p>
+            <p>1. 输入URL后自动生成二维码预览</p>
+            <p>2. 设置内容并点击"发送打印"上传到喷码机</p>
+            <p>3. 点击"启动喷印"启动喷码机</p>
+            <p>4. 喷码机将自动检测并打印二维码/文本</p>
             <p className="mt-2 pt-2 border-t border-blue-200">
               <span className="font-medium">二维码参数说明:</span>
             </p>
-            <p>• 二维码大小: 1x-5x 放大倍数，控制二维码整体尺寸</p>
+            <p>• 二维码大小: 1x-5x 放大倍数，推荐使用3x或4x</p>
             <p>• X/Y坐标: 二维码左上角在打印区域的位置（像素）</p>
             <p>• 反色打印: 勾选后黑白反转，适用于深色材质</p>
-            <p className="mt-1 text-blue-700 font-medium">注意: 使用图案模块发送，自动生成标准二维码图案</p>
+            <p className="mt-1 text-blue-700 font-medium">
+              注意: 使用图案模块(0x07)发送，系统自动将URL转换为标准二维码图案
+            </p>
           </CardContent>
         </Card>
       </CardContent>
