@@ -262,6 +262,15 @@ export function ContentEditor({
               停止喷印
             </Button>
           </div>
+          <Button
+            variant="outline"
+            className="w-full bg-gradient-to-r from-purple-50 to-blue-50 border-purple-200 hover:from-purple-100 hover:to-blue-100"
+            onClick={onTriggerPrint}
+            disabled={!connected || !printing}
+          >
+            <Play className="mr-2 h-4 w-4 text-purple-600" />
+            <span className="text-purple-700 font-medium">模拟喷印（替代光眼触发）</span>
+          </Button>
         </div>
 
         <Card className="bg-blue-50 border-blue-200">
@@ -270,7 +279,8 @@ export function ContentEditor({
             <p>1. 输入URL后自动生成二维码预览</p>
             <p>2. 设置内容并点击"发送打印"上传到喷码机</p>
             <p>3. 点击"启动喷印"启动喷码机</p>
-            <p>4. 喷码机将自动检测并打印二维码/文本</p>
+            <p>4. 点击"模拟喷印"触发打印（替代光眼触发）</p>
+            <p>5. 完成后点击"停止喷印"</p>
             <p className="mt-2 pt-2 border-t border-blue-200">
               <span className="font-medium">二维码参数说明:</span>
             </p>
