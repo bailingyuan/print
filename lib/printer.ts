@@ -1,5 +1,7 @@
 import type { Socket } from "net"
 import { exec } from "child_process"
+import QRCode from "qrcode"
+import sharp from "sharp"
 
 // Communication logs storage (in production, use a database)
 let communicationLogs: any[] = []
@@ -574,7 +576,8 @@ export async function executeDebugCommand(commandId: number, params: any = {}) {
 }
 
 /**
- * Send QR code print command
+ * Send QR code as image pattern module (0x07)
+ * 由于二维码模块(0x04)有问题，改用图案模块发送二维码位图
  */
 export async function sendQRCodePrint(
   content: string,
@@ -589,7 +592,7 @@ export async function sendQRCodePrint(
   borderStyle: number,
   borderSize: number,
 ): Promise<{ success: boolean; statusCode?: number; error?: string; data?: Buffer }> {
-  console.log("[v0] ========== 开始发送二维码打印 ==========")
+  console.log("[v0] ========== 开始发送二维码打印（使用图案模块） ==========")
   console.log("[v0] QR Print Parameters:", {
     content,
     size,
@@ -597,27 +600,15 @@ export async function sendQRCodePrint(
     y,
     rotation,
     errorLevel,
-    codeType,
-    codeSize,
-    inverse,
-    borderStyle,
-    borderSize,
   })
 
   try {
-    const qrModuleData = buildQRCodeData(
-      content,
-      size,
-      x,
-      y,
-      rotation,
-      errorLevel,
-      codeType,
-      codeSize,
-      inverse,
-      borderStyle,
-      borderSize,
-    )
+    if (!content || content.trim() === "") {
+      console.error("[v0] QR content is empty")
+      return { success: false, error: "二维码内容不能为空" }
+    }
+
+    const patternModuleData = await buildQRCodeAsPattern(content, size, x, y, rotation, errorLevel, inverse)
 
     // 信息名称 "QR"
     const infoName = "QR"
@@ -627,32 +618,30 @@ export async function sendQRCodePrint(
     // 模块总数
     const moduleCount = 0x01
 
-    const contentData = Buffer.concat([
+    const dataContent = Buffer.concat([
       Buffer.from([infoNameLength]),
       infoNameBuf,
       Buffer.from([moduleCount]),
-      qrModuleData,
+      patternModuleData,
     ])
 
-    const dataLength = contentData.length
-    const dataLengthBuf = Buffer.alloc(3)
-    dataLengthBuf.writeUIntBE(dataLength, 0, 3)
+    // 数据长度 = dataContent的长度（3字节，大端序）
+    const dataLength = Buffer.alloc(3)
+    dataLength.writeUIntBE(dataContent.length, 0, 3)
 
-    const fullData = Buffer.concat([dataLengthBuf, contentData])
+    const fullData = Buffer.concat([dataLength, dataContent])
 
-    console.log("[v0] ========== 二维码数据包详情 ==========")
-    console.log("[v0] Data Length (3 bytes):", dataLength, "->", dataLengthBuf.toString("hex"))
-    console.log("[v0] Info Name Length:", infoNameLength)
-    console.log("[v0] Info Name:", infoName)
-    console.log("[v0] Module Count:", moduleCount)
-    console.log("[v0] QR Module Data Length:", qrModuleData.length, "bytes")
-    console.log("[v0] Full Data Length:", fullData.length, "bytes")
-    console.log("[v0] Full Data (hex):", fullData.toString("hex"))
+    console.log("[v0] === 图案模块数据包详情 ===")
+    console.log("[v0] Data length (3 bytes):", dataLength.toString("hex").toUpperCase(), "=", dataContent.length)
+    console.log("[v0] Info name length:", infoNameLength)
+    console.log("[v0] Info name:", infoName)
+    console.log("[v0] Module count:", moduleCount)
+    console.log("[v0] Pattern Module Data Length:", patternModuleData.length, "bytes")
+    console.log("[v0] Full data length:", fullData.length)
     console.log("[v0] ==========================================")
 
     // 发送命令 0x1C (发送信息文件)
     const result = await sendCommand(0x1c, "发送信息文件", fullData)
-
     console.log("[v0] Info file send result:", result)
 
     if (!result.success) {
@@ -663,155 +652,188 @@ export async function sendQRCodePrint(
       }
     }
 
-    const printResult = await sendCommand(0x01, "发送打印", Buffer.from([0x00, 0x0a]))
+    // 等待喷码机处理信息文件
+    await new Promise((resolve) => setTimeout(resolve, 500))
+
+    // 发送打印命令 0x01
+    const printResult = await sendCommand(0x01, "发送打印")
     console.log("[v0] Print command result:", printResult)
 
     if (!printResult.success) {
       return {
         success: false,
         statusCode: printResult.statusCode,
-        error: `打印命令失败: 状态码 0x${printResult.statusCode?.toString(16)}`,
+        error: `发送打印命令失败: 状态码 0x${printResult.statusCode?.toString(16)}`,
       }
     }
 
-    console.log("[v0] ========== 二维码打印成功 ==========")
+    console.log("[v0] ========== 二维码打印命令发送成功 ==========")
     return { success: true, statusCode: 0 }
-  } catch (error) {
-    console.error("[v0] QR Code print error:", error)
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
-    }
+  } catch (error: any) {
+    console.error("[v0] QR print error:", error)
+    return { success: false, error: error.message || "未知错误" }
   }
 }
 
 /**
- * Build QR code module data according to protocol 3.5.20.5
+ * Build QR code as pattern module (0x07) according to protocol 3.5.20.7
+ * 将二维码转换为位图并使用图案模块发送
  */
-function buildQRCodeData(
+async function buildQRCodeAsPattern(
   content: string,
   size: number,
   x: number,
   y: number,
   rotation: number,
   errorLevel: "L" | "M" | "Q" | "H",
-  codeType: number,
-  codeSize: number,
   inverse: boolean,
-  borderStyle: number,
-  borderSize: number,
-): Buffer {
-  console.log("[v0] Building QR Code Data (按手册规范):", {
-    content,
-    size,
-    x,
-    y,
-    rotation,
-    errorLevel,
-    codeType,
-    codeSize,
-    inverse,
-    borderStyle,
-    borderSize,
-  })
+): Promise<Buffer> {
+  console.log("[v0] Building QR Code as Pattern Module")
 
-  const contentBuf = Buffer.from(content, "utf8")
+  // 生成二维码位图
+  const qrOptions = {
+    errorCorrectionLevel: errorLevel,
+    type: "png" as const,
+    quality: 1,
+    margin: 1,
+    width: 200, // 基础尺寸，会根据size参数调整
+    color: {
+      dark: inverse ? "#FFFFFF" : "#000000",
+      light: inverse ? "#000000" : "#FFFFFF",
+    },
+  }
 
-  // 模块类型: 04 = 二维码模块
-  const moduleType = Buffer.from([0x04])
+  // 生成二维码PNG图片的Buffer
+  const qrBuffer = await QRCode.toBuffer(content, qrOptions)
+  console.log("[v0] QR code PNG buffer size:", qrBuffer.length, "bytes")
 
-  // X/Y坐标 (2字节，大端序，bit15=0表示正数)
+  // 解析PNG获取位图数据
+  const { width, height, bitmap } = await parsePNGToBitmap(qrBuffer)
+  console.log("[v0] QR code bitmap:", { width, height, bitmapSize: bitmap.length })
+
+  // 构建图案模块 (0x07)
+  // 字节0: 模块类型 = 0x07 (图案模块)
+  const moduleType = 0x07
+
+  // 字节1-2: X坐标 (2字节，大端序)
   const xCoord = Buffer.alloc(2)
   xCoord.writeUInt16BE(x & 0x7fff)
+
+  // 字节3-4: Y坐标 (2字节，大端序)
   const yCoord = Buffer.alloc(2)
   yCoord.writeUInt16BE(y & 0x7fff)
 
-  // 线条宽度 (1字节，范围 03~0F，即3-15)
-  // UI的size 1-5 映射到 lineWidth 5-15
-  const lineWidth = Math.max(3, Math.min(15, size + 4))
-  console.log("[v0] Line Width:", lineWidth, "(0x" + lineWidth.toString(16) + ")")
+  // 字节5-6: 图案方向 (2字节)
+  // 0=0°, 359=359°
+  const rotationMap: Record<number, number> = { 0: 0, 90: 90, 180: 180, 270: 270 }
+  const rotationValue = rotationMap[rotation] ?? 0
+  const rotationBuf = Buffer.alloc(2)
+  rotationBuf.writeUInt16BE(rotationValue)
 
-  // 字节4: 条码类型(高4位) + 容错级别(低4位)
-  const errorLevelMap = { L: 0, M: 1, Q: 2, H: 3 }
-  const errorLevelValue = errorLevelMap[errorLevel] || 3
-  const byte4 = (codeType << 4) | errorLevelValue
-  console.log(
-    "[v0] Byte4 (条码类型+容错级别):",
-    "0x" + byte4.toString(16).padStart(2, "0"),
-    `(类型${codeType}, 容错${errorLevel}=${errorLevelValue})`,
-  )
+  // 字节7: 图案尺寸/10 (1字节)
+  // 例如: 100表示图案尺寸为100%
+  const patternScale = 100 // 100% 原始大小
 
-  // 字节5: 条码尺寸 (1字节)
-  // 0=Auto, 1-8对应不同尺寸等级
-  const byte5 = codeSize & 0xff
-  console.log("[v0] Byte5 (条码尺寸):", "0x" + byte5.toString(16).padStart(2, "0"))
-
-  // 字节6: 条码方向(高4位) + 反色选择(低4位)
-  // 方向: 0=0°, 1=90°, 2=180°, 3=270°
+  // 字节8: 图案反色(高4位) + 操作类型(低4位)
   // 反色: 0=不反色, 1=反色
-  const rotationMap: { [key: number]: number } = { 0: 0, 90: 1, 180: 2, 270: 3 }
-  const rotationValue = rotationMap[rotation] || 0
+  // 操作类型: 0=打开模块时绘制, 1=关闭模块时清除
   const inverseValue = inverse ? 1 : 0
-  const byte6 = (rotationValue << 4) | inverseValue
-  console.log(
-    "[v0] Byte6 (方向+反色):",
-    "0x" + byte6.toString(16).padStart(2, "0"),
-    `(方向${rotation}°=${rotationValue}, 反色=${inverseValue})`,
-  )
+  const operationType = 0 // 打开模块时绘制
+  const patternByte = (inverseValue << 4) | operationType
 
-  // 字节7: 边框样式(高4位) + 边框尺寸(低4位)
-  // 边框样式: 0=无边框, 1=上下边框, 2=四周边框
-  // 边框尺寸: 0-15
-  const byte7 = ((borderStyle & 0x0f) << 4) | (borderSize & 0x0f)
-  console.log(
-    "[v0] Byte7 (边框样式+尺寸):",
-    "0x" + byte7.toString(16).padStart(2, "0"),
-    `(样式${borderStyle}, 尺寸${borderSize})`,
-  )
+  // 文件名 (使用固定名称 "qr.bmp")
+  const fileName = "qr.bmp"
+  const fileNameBuf = Buffer.from(fileName, "utf8")
+  const fileNameLength = fileNameBuf.length
 
-  // 字节8: 插入子模块数 (1字节)
-  const subModuleCount = 0x01
-  console.log("[v0] Submodule Count:", subModuleCount)
+  // 字节N: 图片宽度 (2字节，大端序)
+  const widthBuf = Buffer.alloc(2)
+  widthBuf.writeUInt16BE(width)
 
-  // 子模块: 文本子模块 (类型01)
-  const subModuleType = 0x01 // 文本子模块
-  const textLength = Math.min(contentBuf.length, 255)
-  const textContent = contentBuf.slice(0, textLength)
+  // 字节N+2: 图片高度 (2字节，大端序)
+  const heightBuf = Buffer.alloc(2)
+  heightBuf.writeUInt16BE(height)
 
-  console.log("[v0] Submodule: Type=0x01 (文本), Length=", textLength, "bytes")
-  console.log("[v0] Text Content:", textContent.toString())
-
-  const moduleData = Buffer.concat([
-    moduleType, // 1字节: 模块类型 0x04
-    xCoord, // 2字节: X坐标
-    yCoord, // 2字节: Y坐标
-    Buffer.from([lineWidth]), // 1字节: 线条宽度
-    Buffer.from([byte4]), // 1字节: 条码类型+容错级别
-    Buffer.from([byte5]), // 1字节: 条码尺寸
-    Buffer.from([byte6]), // 1字节: 方向+反色
-    Buffer.from([byte7]), // 1字节: 边框样式+尺寸
-    Buffer.from([subModuleCount]), // 1字节: 子模块数量
-    Buffer.from([subModuleType]), // 1字节: 子模块类型
-    Buffer.from([textLength]), // 1字节: 文本长度
-    textContent, // N字节: 文本内容
+  // 组装图案模块数据
+  const patternModule = Buffer.concat([
+    Buffer.from([moduleType]), // 模块类型 1字节
+    xCoord, // X坐标 2字节
+    yCoord, // Y坐标 2字节
+    rotationBuf, // 方向 2字节
+    Buffer.from([patternScale]), // 尺寸/10 1字节
+    Buffer.from([patternByte]), // 反色+操作 1字节
+    Buffer.from([fileNameLength]), // 文件名长度 1字节
+    fileNameBuf, // 文件名
+    widthBuf, // 宽度 2字节
+    heightBuf, // 高度 2字节
+    bitmap, // 位图数据 N字节
   ])
 
-  console.log("[v0] Final QR Module Data (hex):", moduleData.toString("hex"))
-  console.log("[v0] Module Data Length:", moduleData.length, "bytes")
-  console.log("[v0] Module Structure:")
-  console.log("  [0]: 模块类型 =", moduleData[0].toString(16).padStart(2, "0"))
-  console.log("  [1-2]: X坐标 =", moduleData.readUInt16BE(1))
-  console.log("  [3-4]: Y坐标 =", moduleData.readUInt16BE(3))
-  console.log("  [5]: 线条宽度 =", moduleData[5])
-  console.log("  [6]: 条码类型+容错 =", moduleData[6].toString(16).padStart(2, "0"))
-  console.log("  [7]: 条码尺寸 =", moduleData[7].toString(16).padStart(2, "0"))
-  console.log("  [8]: 方向+反色 =", moduleData[8].toString(16).padStart(2, "0"))
-  console.log("  [9]: 边框样式+尺寸 =", moduleData[9].toString(16).padStart(2, "0"))
-  console.log("  [10]: 子模块数 =", moduleData[10])
-  console.log("  [11]: 子模块类型 =", moduleData[11].toString(16).padStart(2, "0"))
-  console.log("  [12]: 文本长度 =", moduleData[12])
+  console.log("[v0] 图案模块数据长度:", patternModule.length, "字节")
+  console.log("[v0] 图案模块参数:", {
+    moduleType: "0x07",
+    x,
+    y,
+    rotation: rotationValue,
+    scale: patternScale,
+    inverse: inverseValue,
+    fileName,
+    width,
+    height,
+    bitmapSize: bitmap.length,
+  })
 
-  return moduleData
+  return patternModule
+}
+
+/**
+ * Parse PNG buffer to bitmap data
+ * 将PNG图片解析为单色位图数据（用于喷码机）
+ */
+async function parsePNGToBitmap(pngBuffer: Buffer): Promise<{
+  width: number
+  height: number
+  bitmap: Buffer
+}> {
+  console.log("[v0] Parsing PNG to bitmap...")
+
+  // 使用sharp处理图片
+  const image = sharp(pngBuffer)
+  const metadata = await image.metadata()
+  const width = metadata.width || 200
+  const height = metadata.height || 200
+
+  console.log("[v0] Image size:", width, "x", height)
+
+  // 转换为灰度图并获取原始像素数据
+  const { data, info } = await image.greyscale().raw().toBuffer({ resolveWithObject: true })
+
+  console.log("[v0] Raw data size:", data.length, "bytes")
+
+  // 转换为单色位图
+  // 每个像素用1位表示（黑=1，白=0）
+  // 阈值：<128为黑色，>=128为白色
+  const bytesPerRow = Math.ceil(width / 8)
+  const bitmapSize = bytesPerRow * height
+  const bitmap = Buffer.alloc(bitmapSize, 0)
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const pixelIndex = y * width + x
+      const pixelValue = data[pixelIndex]
+
+      // 如果像素值<128，认为是黑色，设置对应位为1
+      if (pixelValue < 128) {
+        const byteIndex = y * bytesPerRow + Math.floor(x / 8)
+        const bitIndex = 7 - (x % 8) // 从高位到低位
+        bitmap[byteIndex] |= 1 << bitIndex
+      }
+    }
+  }
+
+  console.log("[v0] Bitmap conversion complete:", bitmap.length, "bytes")
+
+  return { width, height, bitmap }
 }
 
 /**
