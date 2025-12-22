@@ -797,43 +797,52 @@ async function parsePNGToBitmap(pngBuffer: Buffer): Promise<{
 }> {
   console.log("[v0] Parsing PNG to bitmap...")
 
-  // 使用sharp处理图片
-  const image = sharp(pngBuffer)
-  const metadata = await image.metadata()
-  const width = metadata.width || 200
-  const height = metadata.height || 200
+  try {
+    const image = sharp(pngBuffer)
+    const metadata = await image.metadata()
 
-  console.log("[v0] Image size:", width, "x", height)
+    if (!metadata.width || !metadata.height) {
+      throw new Error("Invalid image metadata")
+    }
 
-  // 转换为灰度图并获取原始像素数据
-  const { data, info } = await image.greyscale().raw().toBuffer({ resolveWithObject: true })
+    const width = metadata.width
+    const height = metadata.height
 
-  console.log("[v0] Raw data size:", data.length, "bytes")
+    console.log("[v0] Image size:", width, "x", height)
 
-  // 转换为单色位图
-  // 每个像素用1位表示（黑=1，白=0）
-  // 阈值：<128为黑色，>=128为白色
-  const bytesPerRow = Math.ceil(width / 8)
-  const bitmapSize = bytesPerRow * height
-  const bitmap = Buffer.alloc(bitmapSize, 0)
+    // 转换为灰度图并获取原始像素数据
+    const { data } = await image.greyscale().raw().toBuffer({ resolveWithObject: true })
 
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const pixelIndex = y * width + x
-      const pixelValue = data[pixelIndex]
+    console.log("[v0] Raw data size:", data.length, "bytes")
 
-      // 如果像素值<128，认为是黑色，设置对应位为1
-      if (pixelValue < 128) {
-        const byteIndex = y * bytesPerRow + Math.floor(x / 8)
-        const bitIndex = 7 - (x % 8) // 从高位到低位
-        bitmap[byteIndex] |= 1 << bitIndex
+    // 转换为单色位图
+    // 每个像素用1位表示（黑=1，白=0）
+    const bytesPerRow = Math.ceil(width / 8)
+    const bitmapSize = bytesPerRow * height
+    const bitmap = Buffer.alloc(bitmapSize, 0)
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const pixelIndex = y * width + x
+        const pixelValue = data[pixelIndex]
+
+        // 如果像素值<128，认为是黑色，设置对应位为1
+        if (pixelValue < 128) {
+          const byteIndex = y * bytesPerRow + Math.floor(x / 8)
+          const bitIndex = 7 - (x % 8)
+          bitmap[byteIndex] |= 1 << bitIndex
+        }
       }
     }
+
+    console.log("[v0] Bitmap conversion complete:", bitmap.length, "bytes")
+    console.log("[v0] First 32 bytes of bitmap:", bitmap.slice(0, 32).toString("hex"))
+
+    return { width, height, bitmap }
+  } catch (error) {
+    console.error("[v0] Error parsing PNG to bitmap:", error)
+    throw error
   }
-
-  console.log("[v0] Bitmap conversion complete:", bitmap.length, "bytes")
-
-  return { width, height, bitmap }
 }
 
 /**

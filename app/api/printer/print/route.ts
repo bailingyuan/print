@@ -16,14 +16,13 @@ export async function POST(request: Request) {
 
       const result = await sendQRCodePrint(
         content.url,
-        content.quantity,
         content.size || 3,
-        content.errorLevel || "H",
         content.x || 0,
         content.y || 0,
+        content.rotation || 0,
+        content.errorLevel || "H",
         content.codeType || 0,
         content.codeSize || 0,
-        content.rotation || 0,
         content.inverse || false,
         content.borderStyle || 0,
         content.borderSize || 0,
